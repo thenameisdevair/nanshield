@@ -203,12 +203,12 @@ function computeScore(results) {
 export default async function scoreToken(tokenAddress, chain, apiKey) {
   const commands = [
     `nansen research token info --token ${tokenAddress} --chain ${chain} --fields name,symbol,liquidity_usd,created_at`,
-    `nansen research token flows --token ${tokenAddress} --chain ${chain} --timeframe 24h`,
+    `nansen research token flows --token ${tokenAddress} --chain ${chain}`,
     `nansen research token who-bought-sold --token ${tokenAddress} --chain ${chain} --timeframe 24h`,
-    `nansen research token holders --token ${tokenAddress} --chain ${chain} --limit 5`,
-    `nansen research smart-money netflow --chain ${chain} --token ${tokenAddress} --timeframe 24h`,
-    `nansen research smart-money holdings --chain ${chain} --token ${tokenAddress}`,
-    `nansen research smart-money dex-trades --chain ${chain} --token ${tokenAddress} --timeframe 24h --limit 10`,
+    `nansen research token holders --token ${tokenAddress} --chain ${chain} --fields address,percentage,token_amount --limit 3`,
+    `nansen research smart-money netflow --chain ${chain} --timeframe 24h --limit 5`,
+    `nansen research smart-money holdings --chain ${chain} --limit 5`,
+    `nansen research smart-money dex-trades --chain ${chain} --timeframe 24h --limit 5`,
   ];
 
   const results = commands.map((cmd) => run(cmd, apiKey));
@@ -217,8 +217,11 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   let topHolderAddress = null;
   try {
     const holdersData = parse(results[3]);
+    console.error('[debug] call 4 raw:', results[3].data?.slice(0, 500));
+    console.error('[debug] call 4 parsed:', JSON.stringify(holdersData)?.slice(0, 500));
     const holders = Array.isArray(holdersData) ? holdersData : holdersData?.holders ?? [];
     topHolderAddress = holders[0]?.address ?? holders[0]?.wallet_address ?? holders[0]?.holder_address ?? null;
+    console.error('[debug] top holder address:', topHolderAddress);
   } catch {
     // leave null
   }
