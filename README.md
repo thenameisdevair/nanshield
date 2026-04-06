@@ -25,12 +25,18 @@ One command runs the full intelligence stack — holder concentration, smart mon
 ## Install
 
 ```bash
+# 1. Install nansen-cli
 npm install -g nansen-cli
-npm install -g nanshield
+
+# 2. Install NanGuard directly from GitHub
+npm install -g github:thenameisdevair/nanshield
+
+# 3. Run setup wizard
 nanshield setup
 ```
 
-Requires Node.js v18+. Get your Nansen API key at [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup)
+Requires Node.js v18+.
+Get your Nansen API key at: https://app.nansen.ai/auth/agent-setup
 
 ---
 
