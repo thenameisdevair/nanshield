@@ -56,7 +56,7 @@ export function printWatchAlert(timestamp, score, threshold, change) {
   console.log(isBlocked ? chalk.red(msg) : chalk.yellow(msg));
 }
 
-export function writeReport(token, chain, score, flags, verdict, outputPath = './NANSHIELD-REPORT.md') {
+export function writeReport(token, chain, score, flags, verdict, callLog = [], outputPath = './NANSHIELD-REPORT.md') {
   const timestamp = new Date().toISOString();
   const isBlocked = verdict === 'BLOCKED';
 
@@ -95,6 +95,16 @@ ${'█'.repeat(Math.round((score / 100) * 20))}${'░'.repeat(20 - Math.round((s
 ## Risk Flags
 
 ${flagTable}
+
+---
+
+## API Call Log
+
+| # | Command | Status | Time |
+|---|---------|--------|------|
+${(callLog || []).map(({ callNum, command, status, ms }) =>
+  `| ${callNum} | \`${command.length > 60 ? command.slice(0, 57) + '...' : command}\` | ${status === 'ok' ? '✓' : '✗'} | ${ms}ms |`
+).join('\n')}
 
 ---
 
