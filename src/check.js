@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import os from 'os';
 import path from 'path';
 import chalk from 'chalk';
@@ -9,18 +8,19 @@ import scoreToken from './score.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.nanshield', 'config.json');
 
-const CALL_LABELS = [
-  'token info',
-  'token flows',
-  'who-bought-sold',
-  'token holders',
-  'sm netflow',
-  'sm holdings',
-  'sm dex-trades',
-  'profiler labels',
-  'profiler pnl',
-  'profiler txns',
-];
+const CALL_LABELS = {
+  0:  'nansen agent',
+  1:  'token info',
+  2:  'who-bought-sold',
+  3:  'profiler counterparties',
+  4:  'profiler pnl',
+  5:  'profiler txns',
+  6:  'token holders',
+  7:  'sm dex-trades',
+  8:  'sm netflow',
+  9:  'token flows',
+  10: 'sm holdings',
+};
 
 export default async function runCheck(token, chain, options = {}) {
   // 1. Load config and merge with CLI options
@@ -47,14 +47,15 @@ export default async function runCheck(token, chain, options = {}) {
   printBanner();
 
   // 4. Status line + spinner
+  const callCount = options.deep ? '11' : '10';
   console.log(chalk.cyan(`Scanning ${token} on ${finalChain}...`));
-  const spinner = ora('Running 10 Nansen API calls...').start();
+  const spinner = ora(`Running ${callCount} Nansen API calls...`).start();
   const scanStart = Date.now();
 
-  // 5. Score
+  // 5. Score (pass deep flag — agent call runs inside scoreToken if deep)
   let result;
   try {
-    result = await scoreToken(token, finalChain, apiKey);
+    result = await scoreToken(token, finalChain, apiKey, options.deep ?? false);
   } catch (err) {
     spinner.fail('Scan failed');
     console.log(chalk.red(`Error: ${err.message}`));
@@ -63,43 +64,33 @@ export default async function runCheck(token, chain, options = {}) {
 
   const elapsed = ((Date.now() - scanStart) / 1000).toFixed(1);
   const succeeded = result.callLog.filter((c) => c.status === 'ok').length;
-  spinner.succeed(chalk.gray(`Completed in ${elapsed}s — ${succeeded}/10 calls succeeded`));
+  spinner.succeed(chalk.gray(`Completed in ${elapsed}s — ${succeeded}/${callCount} calls succeeded`));
 
-  // 6. Score bar, flags, verdict
+  // 6. Agent assessment (deep mode) — shown before score bar
+  if (result.agentAssessment) {
+    console.log(chalk.yellow.bold('\n🤖 AI Risk Assessment:'));
+    console.log(chalk.yellow(result.agentAssessment));
+    console.log('');
+  }
+
+  // 7. Score bar, flags, verdict
   printScoreBar(result.score, threshold);
   printFlags(result.flags);
   printVerdict(result.score, threshold);
 
-  // 7. Call log table
+  // 8. Call log table
   console.log(chalk.bold('\nAPI CALL LOG'));
-  result.callLog.forEach(({ callNum, status, ms }, i) => {
-    const label = (CALL_LABELS[i] ?? `call ${callNum}`).padEnd(20);
+  result.callLog.forEach(({ callNum, status, ms }) => {
+    const label = (CALL_LABELS[callNum] ?? `call ${callNum}`).padEnd(24);
     const icon  = status === 'ok' ? chalk.green('✓') : chalk.red('✗');
     console.log(`  [${String(callNum).padStart(2)}] ${label} ${icon}  ${ms}ms`);
   });
 
-  // 8. Write report
+  // 9. Write report
   const verdict = result.score >= threshold ? 'BLOCKED' : 'CLEARED';
   if (options.report) {
     const outputPath = './NANSHIELD-REPORT.md';
     writeReport(token, finalChain, result.score, result.flags, verdict, result.callLog, outputPath);
-  }
-
-  // 9. Deep AI assessment
-  if (options.deep) {
-    console.log(chalk.bold('\nAI ASSESSMENT'));
-    const deepSpinner = ora('Querying Nansen agent...').start();
-    try {
-      const question = `Does token ${token} on ${finalChain} show rug pull or dump warning signs based on recent smart money activity?`;
-      const response = execSync(
-        `nansen agent "${question.replace(/"/g, '\\"')}"`,
-        { env: { ...process.env, NANSEN_API_KEY: apiKey }, stdio: 'pipe', timeout: 60000 }
-      ).toString().trim();
-      deepSpinner.stop();
-      console.log(chalk.yellow(`AI Assessment: ${response}`));
-    } catch {
-      deepSpinner.fail('Agent query failed');
-    }
   }
 
   return { score: result.score, flags: result.flags, passed: result.score < threshold };

@@ -115,26 +115,28 @@ export function computeScore(results, topTraderAddress) {
     }
   })();
 
-  // Factor 3 — Top Trader Profile (profiler pnl, results[2])
+  // Factor 3 — Top Trader Network (call_3 profiler counterparties, results[2])
   (() => {
     if (!topTraderAddress) {
-      flags.push({ emoji: '⚪', label: 'Top Trader Profile', detail: 'Data unavailable', points: 0 });
+      flags.push({ emoji: '⚪', label: 'Top Trader Network', detail: 'Data unavailable', points: 0 });
       return;
     }
-    const pnl = parseObject(results[2].data);
-    if (!pnl || pnl.traded_times === 0) {
-      score += 5;
-      flags.push({ emoji: '🟡', label: 'Top Trader Profile', detail: 'Top trader has no trading history', points: 5 });
+    const arr = parseArray(results[2].data);
+    if (!arr || arr.length === 0) {
+      flags.push({ emoji: '⚪', label: 'Top Trader Network', detail: 'Data unavailable', points: 0 });
       return;
     }
-    if (pnl.win_rate > 0.6 && pnl.realized_pnl_usd > 0) {
-      flags.push({ emoji: '🟢', label: 'Top Trader Profile', detail: `Top trader profitable: ${Math.round(pnl.win_rate * 100)}% win rate`, points: 0 });
-    } else if (pnl.realized_pnl_usd < 0) {
+    const unlabeled = arr.filter(x => !x.address_label || x.address_label.trim() === '').length;
+    const unlabeledPct = Math.round((unlabeled / arr.length) * 100);
+
+    if (unlabeledPct > 80) {
       score += 10;
-      flags.push({ emoji: '🔴', label: 'Top Trader Profile', detail: `Top trader unprofitable: ${fmt(pnl.realized_pnl_usd)} PnL`, points: 10 });
-    } else {
+      flags.push({ emoji: '🔴', label: 'Top Trader Network', detail: `${unlabeledPct}% of top trader's network is unlabeled`, points: 10 });
+    } else if (unlabeledPct > 50) {
       score += 5;
-      flags.push({ emoji: '🟡', label: 'Top Trader Profile', detail: 'Top trader break-even', points: 5 });
+      flags.push({ emoji: '🟡', label: 'Top Trader Network', detail: `Mixed network — ${unlabeledPct}% unlabeled counterparties`, points: 5 });
+    } else {
+      flags.push({ emoji: '🟢', label: 'Top Trader Network', detail: 'Top trader transacts mostly with labeled entities', points: 0 });
     }
   })();
 
@@ -229,14 +231,39 @@ export function computeScore(results, topTraderAddress) {
   return { score: Math.min(score, 100), flags };
 }
 
-export default async function scoreToken(tokenAddress, chain, apiKey) {
+export default async function scoreToken(tokenAddress, chain, apiKey, deep = false) {
   const debugLog = { token: tokenAddress, chain, timestamp: new Date().toISOString() };
+
+  // ── Call 0: nansen agent (deep mode only) ────────────────────────────────
+  let agentAssessment = null;
+  let agentCallEntry = null;
+  if (deep) {
+    const question = `Analyze token ${tokenAddress} on ${chain}: are there any rug pull signals, smart money exits, unusual holder concentration, or suspicious trading patterns in the last 24 hours? Give a risk assessment in 2-3 sentences.`;
+    const agentCmd = `nansen agent "${question.replace(/"/g, '\\"')}"`;
+    const agentStart = Date.now();
+    try {
+      const raw = execSync(agentCmd, {
+        env: { ...process.env, NANSEN_API_KEY: apiKey },
+        stdio: 'pipe',
+        timeout: 60000,
+      }).toString().trim();
+      const agentMs = Date.now() - agentStart;
+      agentAssessment = raw;
+      debugLog['call_0'] = { command: agentCmd, status: 'ok', ms: agentMs, raw: raw.slice(0, 1000) };
+      agentCallEntry = { callNum: 0, command: agentCmd, status: 'ok', ms: agentMs };
+    } catch (err) {
+      const agentMs = Date.now() - agentStart;
+      const errOut = err.stdout?.toString() || err.stderr?.toString() || err.message;
+      debugLog['call_0'] = { command: agentCmd, status: 'failed', ms: agentMs, error: errOut.slice(0, 500) };
+      agentCallEntry = { callNum: 0, command: agentCmd, status: 'failed', ms: agentMs };
+    }
+  }
 
   // ── Batch 1: cheap calls (1, 2) ──────────────────────────────────────────
   const r1 = run(1, `nansen research token info --token ${tokenAddress} --chain ${chain} --fields name,symbol,liquidity_usd,spot_metrics`, apiKey, debugLog);
   const r2 = run(2, `nansen research token who-bought-sold --token ${tokenAddress} --chain ${chain} --limit 5`, apiKey, debugLog);
 
-  // ── Call 6 early to extract top holder ───────────────────────────────────
+  // ── Call 6 early to get holders ──────────────────────────────────────────
   const r6 = run(6, `nansen research token holders --token ${tokenAddress} --chain ${chain} --fields address,token_amount --limit 3`, apiKey, debugLog);
 
   // Extract top trader address from call_2 for profiler calls
@@ -249,10 +276,13 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   debugLog.topTraderAddressSource = topTraderAddress ? 'call2' : 'none';
 
   // ── Batch 2: profiler calls (3, 4, 5) ────────────────────────────────────
+  // call_3: counterparties — network quality of top trader
+  // call_4: pnl-summary   — track record
+  // call_5: transactions   — recent activity
   const profilerTarget = topTraderAddress ?? '0x3304E22DDaa22bCdC5fCa2269b418046aE7b566A';
-  const r3 = run(3, `nansen research profiler pnl-summary --address ${profilerTarget}`, apiKey, debugLog);
-  const r4 = run(4, `nansen research profiler transactions --address ${profilerTarget} --limit 3`, apiKey, debugLog);
-  const r5 = run(5, `nansen research profiler labels --address ${profilerTarget}`, apiKey, debugLog);
+  const r3 = run(3, `nansen research profiler counterparties --address ${profilerTarget} --limit 5`, apiKey, debugLog);
+  const r4 = run(4, `nansen research profiler pnl-summary --address ${profilerTarget}`, apiKey, debugLog);
+  const r5 = run(5, `nansen research profiler transactions --address ${profilerTarget} --limit 3`, apiKey, debugLog);
 
   // ── Batch 3: remaining premium calls (7, 8, 9, 10) ───────────────────────
   const r7  = run(7,  `nansen research smart-money dex-trades --chain ${chain} --timeframe 24h --limit 3`, apiKey, debugLog);
@@ -261,9 +291,9 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   const r10 = run(10, `nansen research smart-money holdings --chain ${chain} --limit 3`, apiKey, debugLog);
 
   // Results array: index 0–9 → call numbers 1–10
-  // results[0]=call_1, [1]=call_2, [2]=call_3(pnl), [3]=call_4(txns),
-  // [4]=call_5(labels), [5]=call_6(holders), [6]=call_7(sm dex),
-  // [7]=call_8(sm netflow), [8]=call_9(flows), [9]=call_10(sm holdings)
+  // [0]=call_1(token info), [1]=call_2(who-bought-sold), [2]=call_3(counterparties),
+  // [3]=call_4(pnl), [4]=call_5(txns), [5]=call_6(holders),
+  // [6]=call_7(sm dex), [7]=call_8(sm netflow), [8]=call_9(flows), [9]=call_10(sm holdings)
   const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10];
 
   // ── Write debug file ──────────────────────────────────────────────────────
@@ -272,12 +302,15 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   } catch { /* non-fatal */ }
 
   // ── Build call log ────────────────────────────────────────────────────────
-  const callLog = results.map((r, i) => ({
+  const researchCalls = results.map((r, i) => ({
     callNum: i + 1,
     command: debugLog[`call_${i + 1}`]?.command ?? '',
     status: r.ok ? 'ok' : 'failed',
     ms: r.ms,
   }));
+  const callLog = agentCallEntry
+    ? [agentCallEntry, ...researchCalls]
+    : researchCalls;
 
   // ── Score ─────────────────────────────────────────────────────────────────
   const { score, flags } = computeScore(results, topTraderAddress);
@@ -287,7 +320,7 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
     if (!r.ok) return sum;
     return sum + CREDIT_COST[CALL_TYPES[i + 1]];
   }, 0);
-  console.error(`Estimated credits used: ~${creditsUsed}`);
+  console.error(`Estimated credits used: ~${creditsUsed}${deep ? ' + ~20 (agent)' : ''}`);
 
   // ── Token info ────────────────────────────────────────────────────────────
   let tokenInfo = { name: 'Unknown', symbol: 'UNKNOWN', address: tokenAddress };
@@ -297,5 +330,5 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
     if (d) tokenInfo = { name: d.name ?? tokenInfo.name, symbol: d.symbol ?? tokenInfo.symbol, address: tokenAddress };
   } catch { /* use defaults */ }
 
-  return { score, flags, callLog, tokenInfo };
+  return { score, flags, callLog, tokenInfo, agentAssessment };
 }

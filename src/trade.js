@@ -13,12 +13,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function run(command, apiKey) {
+function run(command, env) {
   return execSync(command, {
-    env: {
-      ...process.env,
-      NANSEN_API_KEY: apiKey,
-    },
+    env,
     stdio: 'pipe',
     timeout: 60000,
   }).toString().trim();
@@ -51,12 +48,30 @@ export default async function runTrade(token, chain, options = {}) {
     process.exit(1);
   }
 
-  // 3. Header
+  // 3. Source wallet password
+  let walletPassword = process.env.NANSEN_WALLET_PASSWORD;
+  if (!walletPassword) {
+    const envPath = path.join(os.homedir(), '.nansen', '.env');
+    if (await fs.pathExists(envPath)) {
+      const envContent = await fs.readFile(envPath, 'utf8');
+      const match = envContent.match(/NANSEN_WALLET_PASSWORD=(.+)/);
+      if (match) walletPassword = match[1].trim();
+    }
+  }
+  if (!walletPassword) {
+    console.log(chalk.red('✗ NANSEN_WALLET_PASSWORD not set.'));
+    console.log(chalk.gray("Run: echo 'NANSEN_WALLET_PASSWORD=yourpassword' > ~/.nansen/.env"));
+    process.exit(1);
+  }
+
+  const tradeEnv = { ...process.env, NANSEN_API_KEY: apiKey, NANSEN_WALLET_PASSWORD: walletPassword };
+
+  // 4. Header
   printBanner();
   console.log(chalk.cyan(`NanGuard Trade Pipeline — ${token} on ${finalChain}`));
   console.log(chalk.gray(`Amount: ${amount} ${amountUnit || 'base units'}`));
 
-  // 4. Scan
+  // 5. Scan
   const spinner = ora('Running 10 Nansen API calls...').start();
   const scanStart = Date.now();
   let result;
@@ -76,7 +91,7 @@ export default async function runTrade(token, chain, options = {}) {
   printFlags(flags);
   printVerdict(score, threshold);
 
-  // 5. Gate logic
+  // 6. Gate logic
   console.log('');
   if (score >= threshold && !force) {
     console.log(chalk.red(`⛔ Trade blocked by NanGuard. Score: ${score}/${threshold}`));
@@ -92,7 +107,7 @@ export default async function runTrade(token, chain, options = {}) {
     console.log(chalk.green('✅ Security gate passed. Proceeding to trade execution...'));
   }
 
-  // 6. Dry run
+  // 7. Dry run
   if (!execute) {
     console.log(chalk.yellow('\nDRY RUN — trade would execute with these parameters:'));
     console.log(chalk.gray(`  Chain:  ${finalChain}`));
@@ -104,7 +119,7 @@ export default async function runTrade(token, chain, options = {}) {
     return { score, passed: score < threshold, quoteId: null, txHash: null };
   }
 
-  // 7. Quote
+  // 8. Quote
   const quoteSpinner = ora('Getting quote from Nansen DEX...').start();
   let quoteId = null;
   let quoteData = null;
@@ -121,9 +136,10 @@ export default async function runTrade(token, chain, options = {}) {
       `--wallet ${walletName}`,
     ].join(' ');
 
-    const raw = run(quoteCmd, apiKey);
-    quoteData = JSON.parse(raw);
-    quoteId = quoteData?.data?.quoteId ?? quoteData?.quoteId ?? quoteData?.id ?? null;
+    const raw = run(quoteCmd, tradeEnv);
+    const json = JSON.parse(raw);
+    quoteId = json?.data?.quoteId ?? json?.data?.id ?? json?.quoteId ?? json?.id ?? null;
+    quoteData = json;
     quoteSpinner.succeed(chalk.cyan(`Quote received: ${quoteId ?? '(id unavailable)'}`));
 
     const rate = quoteData?.data?.rate ?? quoteData?.rate ?? null;
@@ -136,7 +152,7 @@ export default async function runTrade(token, chain, options = {}) {
     process.exit(1);
   }
 
-  // 8. Execute
+  // 9. Execute
   console.log(chalk.yellow('\nExecuting trade in 3 seconds... Ctrl+C to abort.'));
   await sleep(3000);
 
@@ -150,7 +166,7 @@ export default async function runTrade(token, chain, options = {}) {
       `--wallet ${walletName}`,
     ].join(' ');
 
-    const raw = run(execCmd, apiKey);
+    const raw = run(execCmd, tradeEnv);
     const execData = JSON.parse(raw);
     txHash = execData?.data?.txHash ?? execData?.txHash ?? execData?.hash ?? null;
 
@@ -167,6 +183,6 @@ export default async function runTrade(token, chain, options = {}) {
     console.log(chalk.gray('Quote may have expired. Try again with a fresh quote.'));
   }
 
-  // 9. Return
+  // 10. Return
   return { score, passed: score < threshold, quoteId, txHash };
 }

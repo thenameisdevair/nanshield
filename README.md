@@ -211,17 +211,33 @@ A new file is created each day. Old logs are never deleted.
 
 ---
 
-## x402 Pay-Per-Call
+## Credit Requirements
 
-No subscription required. Fund a wallet with USDC on Base and `nansen-cli` handles x402 micropayments automatically for each API call.
+NanGuard makes 10 Nansen API calls per scan.
 
-Approximate costs per call:
-- Research calls: $0.01–$0.05 each
-- Full 10-call scan: ~$0.26
-- AI agent call (`--deep`): ~$0.20 additional
-- Trade quote + execute: ~$0.10 additional
+| Call Type | Endpoint | Pro Credits | Free Credits |
+|-----------|----------|-------------|--------------|
+| Token info | tgm/info | ~1 | ~10 |
+| Who-bought-sold | tgm/who-bought-sold | 1 | 10 |
+| Token flows | tgm/flows | 1 | 10 |
+| Profiler pnl | profiler/pnl-summary | 1 | 10 |
+| Profiler txns | profiler/transactions | 1 | 10 |
+| Profiler counterparties | profiler/counterparties | 1 | 10 |
+| Token holders | tgm/holders | 5 | 50 |
+| SM dex-trades | sm/dex-trades | 5 | 50 |
+| SM netflow | sm/netflow | 5 | 50 |
+| SM holdings | sm/holdings | 5 | 50 |
+| **nansen agent** | agent | ~20 | ~200 |
 
-You only pay for what you scan.
+**Estimated cost per full scan:**
+| Plan | Basic scan (no --deep) | Deep scan (--deep) |
+|------|----------------------|-------------------|
+| Pro | ~21 credits | ~41 credits |
+| Free | ~210 credits | ~410 credits |
+
+> Free tier (100 credits) is not sufficient for a full scan.
+> NanGuard works best with a Nansen Pro API key.
+> x402 pay-per-call alternative: ~$0.26 per scan on Base.
 
 ---
 
