@@ -134,10 +134,14 @@ export default async function runTrade(token, chain, options = {}) {
       `--amount ${amount}`,
       unitFlag,
       `--wallet ${walletName}`,
+      `--pretty`,
     ].join(' ');
 
     const raw = run(quoteCmd, tradeEnv);
-    const json = JSON.parse(raw);
+    // nansen CLI may prefix stdout with human-readable text before the JSON
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in quote response: ' + raw);
+    const json = JSON.parse(jsonMatch[0]);
     quoteId = json?.data?.quoteId ?? json?.data?.id ?? json?.quoteId ?? json?.id ?? null;
     quoteData = json;
     quoteSpinner.succeed(chalk.cyan(`Quote received: ${quoteId ?? '(id unavailable)'}`));
@@ -167,7 +171,10 @@ export default async function runTrade(token, chain, options = {}) {
     ].join(' ');
 
     const raw = run(execCmd, tradeEnv);
-    const execData = JSON.parse(raw);
+    // nansen CLI may prefix stdout with human-readable text before the JSON
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in execute response: ' + raw);
+    const execData = JSON.parse(jsonMatch[0]);
     txHash = execData?.data?.txHash ?? execData?.txHash ?? execData?.hash ?? null;
 
     execSpinner.succeed(chalk.green('✅ Trade executed successfully'));
