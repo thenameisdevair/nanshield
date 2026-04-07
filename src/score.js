@@ -4,7 +4,6 @@ import path from 'path';
 import fs from 'fs-extra';
 
 const DEBUG_PATH = path.join(os.homedir(), '.nanshield', 'debug-last-run.json');
-const FALLBACK_WHALE = '0x3304E22DDaa22bCdC5fCa2269b418046aE7b566A';
 
 const CREDIT_COST = { basic: 1, premium: 5 };
 const CALL_TYPES = {
@@ -31,199 +30,199 @@ function run(callNum, command, apiKey, debugLog) {
   }
 }
 
-function parse(result) {
-  if (!result.ok || !result.data) return null;
+// ── Parse helpers ─────────────────────────────────────────────────────────────
+// Handles both { data: { data: X } } and { data: X }
+function parseData(raw) {
   try {
-    const parsed = JSON.parse(result.data);
-    return parsed.data ?? parsed;
-  } catch {
-    return null;
-  }
+    const json = JSON.parse(raw);
+    const inner = json?.data?.data ?? json?.data ?? null;
+    return inner;
+  } catch { return null; }
 }
 
-function parseFirst(result) {
-  const data = parse(result);
-  if (!data) return null;
-  return Array.isArray(data) ? data[0] ?? null : data;
+function parseArray(raw) {
+  const d = parseData(raw);
+  return Array.isArray(d) ? d : null;
 }
 
-function daysSince(dateStr) {
-  if (!dateStr) return null;
-  return (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
+function parseObject(raw) {
+  const d = parseData(raw);
+  return (d && !Array.isArray(d)) ? d : null;
 }
 
-function computeScore(results) {
+function fmt(usd) {
+  return Math.abs(usd).toLocaleString('en-US', {
+    style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+  });
+}
+
+export function computeScore(results, topTraderAddress) {
   const flags = [];
   let score = 0;
 
-  // Factor 1 — Token Age & Liquidity (call 1)
+  // Factor 1 — Token Age & Liquidity (call_1, results[0])
   (() => {
-    const data = parseFirst(results[0]);
-    const liq = data?.liquidity_usd ?? data?.liquidity ?? null;
-    const createdAt = data?.created_at ?? data?.creation_date ?? null;
-    const liqVal = liq !== null ? parseFloat(liq) : null;
-    const age = createdAt ? daysSince(createdAt) : null;
-
-    if (liqVal === null && age === null) {
+    if (!results[0].ok || !results[0].data) {
       flags.push({ emoji: '⚪', label: 'Age & Liquidity', detail: 'Data unavailable', points: 0 });
       return;
     }
-    const liqStr = liqVal !== null ? `$${liqVal.toLocaleString()}` : 'unknown liq';
-    const ageStr = age !== null ? `${Math.floor(age)}d old` : 'unknown age';
+    let tokenData;
+    try {
+      const json = JSON.parse(results[0].data);
+      tokenData = json?.data?.data;
+    } catch {
+      flags.push({ emoji: '⚪', label: 'Age & Liquidity', detail: 'Data unavailable', points: 0 });
+      return;
+    }
+    const liquidity = tokenData?.spot_metrics?.liquidity_usd ?? null;
+    const name = tokenData?.name ?? 'Unknown';
+    const symbol = tokenData?.symbol ?? '';
 
-    if ((liqVal !== null && liqVal < 100000) || (age !== null && age < 30)) {
+    if (liquidity === null) {
+      flags.push({ emoji: '⚪', label: 'Age & Liquidity', detail: 'Data unavailable', points: 0 });
+      return;
+    }
+    if (liquidity < 100000) {
       score += 10;
-      flags.push({ emoji: '🔴', label: 'Age & Liquidity', detail: `${liqStr} liquidity, ${ageStr}`, points: 10 });
-    } else if ((liqVal !== null && liqVal < 500000) || (age !== null && age < 90)) {
+      flags.push({ emoji: '🔴', label: 'Age & Liquidity', detail: `Low liquidity: ${fmt(liquidity)}`, points: 10 });
+    } else if (liquidity < 500000) {
       score += 5;
-      flags.push({ emoji: '🟡', label: 'Age & Liquidity', detail: `${liqStr} liquidity, ${ageStr}`, points: 5 });
+      flags.push({ emoji: '🟡', label: 'Age & Liquidity', detail: `Moderate liquidity: ${fmt(liquidity)}`, points: 5 });
     } else {
-      flags.push({ emoji: '🟢', label: 'Age & Liquidity', detail: `${liqStr} liquidity, ${ageStr}`, points: 0 });
+      flags.push({ emoji: '🟢', label: 'Age & Liquidity', detail: `${name} (${symbol}) — ${fmt(liquidity)} liquidity`, points: 0 });
     }
   })();
 
-  // Factor 2 — Buyer Profile (call 2)
+  // Factor 2 — Buyer Profile (call_2, results[1])
   (() => {
-    const data = parse(results[1]);
-    const arr = Array.isArray(data) ? data : null;
+    const arr = parseArray(results[1].data);
     if (!arr || arr.length === 0) {
       flags.push({ emoji: '⚪', label: 'Buyer Profile', detail: 'Data unavailable', points: 0 });
       return;
     }
-    const retailPct =
-      arr[0]?.retail_buyer_pct ?? arr[0]?.retail_pct ?? arr[0]?.retail_percent ??
-      arr.find(r => (r.buyer_type ?? r.type ?? '').toLowerCase().includes('retail'))?.percentage ?? null;
+    const labeled = arr.filter(x => x.address_label && x.address_label.trim() !== '').length;
+    const retail = arr.length - labeled;
+    const retailPct = Math.round((retail / arr.length) * 100);
 
-    if (retailPct === null) {
-      flags.push({ emoji: '⚪', label: 'Buyer Profile', detail: 'Data unavailable', points: 0 });
-      return;
-    }
-    const val = parseFloat(retailPct);
-    if (val > 80) {
+    if (retailPct > 80) {
       score += 10;
-      flags.push({ emoji: '🔴', label: 'Buyer Profile', detail: `${val.toFixed(1)}% retail buyers`, points: 10 });
-    } else if (val >= 60) {
+      flags.push({ emoji: '🔴', label: 'Buyer Profile', detail: `${retailPct}% unlabeled wallets in recent trades`, points: 10 });
+    } else if (retailPct > 60) {
       score += 5;
-      flags.push({ emoji: '🟡', label: 'Buyer Profile', detail: `${val.toFixed(1)}% retail buyers`, points: 5 });
+      flags.push({ emoji: '🟡', label: 'Buyer Profile', detail: `${retailPct}% unlabeled, ${labeled} labeled wallets`, points: 5 });
     } else {
-      flags.push({ emoji: '🟢', label: 'Buyer Profile', detail: `${val.toFixed(1)}% retail buyers`, points: 0 });
+      flags.push({ emoji: '🟢', label: 'Buyer Profile', detail: `Mostly labeled wallets (${labeled}/${arr.length})`, points: 0 });
     }
   })();
 
-  // Factor 3 — Top Holder Identity (call 3 — profiler labels)
+  // Factor 3 — Top Trader Profile (profiler pnl, results[2])
   (() => {
-    const data = parse(results[2]);
-    const labels = data?.labels ?? (Array.isArray(data) ? data : null);
-    if (labels === null) {
-      flags.push({ emoji: '⚪', label: 'Top Holder Identity', detail: 'Data unavailable', points: 0 });
+    if (!topTraderAddress) {
+      flags.push({ emoji: '⚪', label: 'Top Trader Profile', detail: 'Data unavailable', points: 0 });
       return;
     }
-    if (!Array.isArray(labels) || labels.length === 0) {
+    const pnl = parseObject(results[2].data);
+    if (!pnl || pnl.traded_times === 0) {
+      score += 5;
+      flags.push({ emoji: '🟡', label: 'Top Trader Profile', detail: 'Top trader has no trading history', points: 5 });
+      return;
+    }
+    if (pnl.win_rate > 0.6 && pnl.realized_pnl_usd > 0) {
+      flags.push({ emoji: '🟢', label: 'Top Trader Profile', detail: `Top trader profitable: ${Math.round(pnl.win_rate * 100)}% win rate`, points: 0 });
+    } else if (pnl.realized_pnl_usd < 0) {
       score += 10;
-      flags.push({ emoji: '🔴', label: 'Top Holder Identity', detail: 'Top holder has no labels', points: 10 });
-      return;
-    }
-    const knownEntities = ['exchange', 'fund', 'market maker', 'custodian', 'institution', 'cex', 'dex'];
-    const isKnown = labels.some((l) => {
-      const lstr = (typeof l === 'string' ? l : l?.label ?? l?.name ?? '').toLowerCase();
-      return knownEntities.some((e) => lstr.includes(e));
-    });
-    if (isKnown) {
-      const names = labels.slice(0, 2).map(l => typeof l === 'string' ? l : l?.label ?? '').join(', ');
-      flags.push({ emoji: '🟢', label: 'Top Holder Identity', detail: `Known entity: ${names}`, points: 0 });
+      flags.push({ emoji: '🔴', label: 'Top Trader Profile', detail: `Top trader unprofitable: ${fmt(pnl.realized_pnl_usd)} PnL`, points: 10 });
     } else {
       score += 5;
-      flags.push({ emoji: '🟡', label: 'Top Holder Identity', detail: 'Labeled but not exchange/fund', points: 5 });
+      flags.push({ emoji: '🟡', label: 'Top Trader Profile', detail: 'Top trader break-even', points: 5 });
     }
   })();
 
-  // Factor 4 — Holder Concentration (call 6)
+  // Factor 4 — Holder Concentration (call_6, results[5])
   (() => {
-    const data = parse(results[5]);
-    const holders = Array.isArray(data) ? data : data?.holders ?? [];
-    const top = holders[0];
-    const pct = top?.percentage ?? top?.percent_of_supply ?? top?.balance_pct ?? null;
-    if (pct === null) {
+    const arr = parseArray(results[5].data);
+    if (!arr || arr.length === 0) {
       flags.push({ emoji: '⚪', label: 'Holder Concentration', detail: 'Data unavailable', points: 0 });
       return;
     }
-    const val = parseFloat(pct);
-    if (val > 30) {
+    const total = arr.reduce((s, x) => s + (x.token_amount ?? 0), 0);
+    const topShare = total > 0 ? Math.round((arr[0].token_amount / total) * 100) : null;
+
+    if (topShare === null) {
+      flags.push({ emoji: '⚪', label: 'Holder Concentration', detail: 'Data unavailable', points: 0 });
+      return;
+    }
+    if (topShare > 50) {
       score += 20;
-      flags.push({ emoji: '🔴', label: 'Holder Concentration', detail: `Top wallet holds ${val.toFixed(1)}% of supply`, points: 20 });
-    } else if (val >= 15) {
+      flags.push({ emoji: '🔴', label: 'Holder Concentration', detail: `Top wallet holds ${topShare}% of tracked supply`, points: 20 });
+    } else if (topShare > 30) {
       score += 10;
-      flags.push({ emoji: '🟡', label: 'Holder Concentration', detail: `Top wallet holds ${val.toFixed(1)}% of supply`, points: 10 });
+      flags.push({ emoji: '🟡', label: 'Holder Concentration', detail: `Top wallet holds ${topShare}% of tracked supply`, points: 10 });
     } else {
-      flags.push({ emoji: '🟢', label: 'Holder Concentration', detail: `Top wallet holds ${val.toFixed(1)}% of supply`, points: 0 });
+      flags.push({ emoji: '🟢', label: 'Holder Concentration', detail: `Healthy distribution, top wallet ${topShare}%`, points: 0 });
     }
   })();
 
-  // Factor 5 — SM Activity (call 7 — sm dex-trades)
+  // Factor 5 — SM DEX Activity (call_7, results[6])
   (() => {
-    const data = parse(results[6]);
-    const arr = Array.isArray(data) ? data : null;
+    const arr = parseArray(results[6].data);
     if (!arr || arr.length === 0) {
       flags.push({ emoji: '⚪', label: 'SM DEX Activity', detail: 'Data unavailable', points: 0 });
       return;
     }
-    // Score based on buy vs sell volume
-    let buyVol = 0, sellVol = 0;
-    for (const trade of arr) {
-      const side = (trade.side ?? trade.trade_type ?? trade.type ?? '').toLowerCase();
-      const vol = parseFloat(trade.volume_usd ?? trade.amount_usd ?? trade.value_usd ?? 0);
-      if (side.includes('buy')) buyVol += vol;
-      else if (side.includes('sell')) sellVol += vol;
-    }
-    if (sellVol > buyVol * 2) {
+    const dumpingNew = arr.filter(x => (x.token_sold_age_days ?? 999) < 30).length;
+    const buyingNew = arr.filter(x => (x.token_bought_age_days ?? 999) < 30).length;
+
+    if (dumpingNew > buyingNew) {
       score += 15;
-      flags.push({ emoji: '🔴', label: 'SM DEX Activity', detail: `SM selling dominant (${arr.length} trades)`, points: 15 });
-    } else if (sellVol > buyVol) {
+      flags.push({ emoji: '🔴', label: 'SM DEX Activity', detail: `SM wallets selling young tokens (${dumpingNew} trades)`, points: 15 });
+    } else if (dumpingNew === buyingNew && dumpingNew > 0) {
       score += 8;
-      flags.push({ emoji: '🟡', label: 'SM DEX Activity', detail: `SM net selling (${arr.length} trades)`, points: 8 });
+      flags.push({ emoji: '🟡', label: 'SM DEX Activity', detail: 'Mixed SM activity on new tokens', points: 8 });
     } else {
-      flags.push({ emoji: '🟢', label: 'SM DEX Activity', detail: `SM net buying (${arr.length} trades)`, points: 0 });
+      flags.push({ emoji: '🟢', label: 'SM DEX Activity', detail: 'SM wallets buying established tokens', points: 0 });
     }
   })();
 
-  // Factor 6 — SM Net Sentiment (call 8 — sm netflow)
+  // Factor 6 — SM Net Sentiment (call_8, results[7])
   (() => {
-    const first = parseFirst(results[7]);
-    const netFlow = first?.net_flow_usd ?? first?.netflow_usd ?? first?.net_flow ?? null;
-    if (netFlow === null) {
+    const arr = parseArray(results[7].data);
+    if (!arr || arr.length === 0) {
       flags.push({ emoji: '⚪', label: 'SM Net Sentiment', detail: 'Data unavailable', points: 0 });
       return;
     }
-    const val = parseFloat(netFlow);
-    if (val < -500000) {
+    const total24h = arr.reduce((s, x) => s + (x.net_flow_24h_usd ?? 0), 0);
+
+    if (total24h < -10000) {
       score += 20;
-      flags.push({ emoji: '🔴', label: 'SM Net Sentiment', detail: `SM net outflow $${Math.abs(val).toLocaleString()}`, points: 20 });
-    } else if (val < 0) {
+      flags.push({ emoji: '🔴', label: 'SM Net Sentiment', detail: `Net SM outflow: ${fmt(total24h)} in 24h`, points: 20 });
+    } else if (total24h < 0) {
       score += 10;
-      flags.push({ emoji: '🟡', label: 'SM Net Sentiment', detail: `SM net outflow $${Math.abs(val).toLocaleString()}`, points: 10 });
+      flags.push({ emoji: '🟡', label: 'SM Net Sentiment', detail: `Slight SM outflow: ${fmt(total24h)}`, points: 10 });
     } else {
-      flags.push({ emoji: '🟢', label: 'SM Net Sentiment', detail: `SM net inflow $${val.toLocaleString()}`, points: 0 });
+      flags.push({ emoji: '🟢', label: 'SM Net Sentiment', detail: `Positive SM netflow: ${fmt(total24h)}`, points: 0 });
     }
   })();
 
-  // Factor 7 — Flow Anomaly (call 9 — token flows)
+  // Factor 7 — SM Holdings Trend (call_10, results[9])
   (() => {
-    const data = parseFirst(results[8]);
-    const inflow = data?.inflow_usd ?? data?.inflow ?? data?.total_inflow_usd ?? null;
-    const avg = data?.avg_inflow_usd ?? data?.average_inflow_usd ?? null;
-    if (inflow === null || avg === null || parseFloat(avg) === 0) {
-      flags.push({ emoji: '⚪', label: 'Flow Anomaly', detail: 'Data unavailable', points: 0 });
+    const arr = parseArray(results[9].data);
+    if (!arr || arr.length === 0) {
+      flags.push({ emoji: '⚪', label: 'SM Holdings Trend', detail: 'Data unavailable', points: 0 });
       return;
     }
-    const spike = ((parseFloat(inflow) - parseFloat(avg)) / parseFloat(avg)) * 100;
-    if (spike > 200) {
+    const declining = arr.filter(x => (x.balance_24h_percent_change ?? 0) < 0).length;
+    const growing = arr.filter(x => (x.balance_24h_percent_change ?? 0) > 0).length;
+    const flat = arr.length - declining - growing;
+
+    if (declining > growing) {
       score += 15;
-      flags.push({ emoji: '🔴', label: 'Flow Anomaly', detail: `Inflow spike ${spike.toFixed(0)}% above average`, points: 15 });
-    } else if (spike > 100) {
+      flags.push({ emoji: '🔴', label: 'SM Holdings Trend', detail: `SM holdings declining (${declining} tokens dropping)`, points: 15 });
+    } else if (flat === arr.length) {
       score += 8;
-      flags.push({ emoji: '🟡', label: 'Flow Anomaly', detail: `Inflow spike ${spike.toFixed(0)}% above average`, points: 8 });
+      flags.push({ emoji: '🟡', label: 'SM Holdings Trend', detail: 'No SM movement in tracked holdings', points: 8 });
     } else {
-      flags.push({ emoji: '🟢', label: 'Flow Anomaly', detail: 'Inflow within normal range', points: 0 });
+      flags.push({ emoji: '🟢', label: 'SM Holdings Trend', detail: `SM holdings growing across ${growing} tokens`, points: 0 });
     }
   })();
 
@@ -234,29 +233,26 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   const debugLog = { token: tokenAddress, chain, timestamp: new Date().toISOString() };
 
   // ── Batch 1: cheap calls (1, 2) ──────────────────────────────────────────
-  const r1  = run(1,  `nansen research token info --token ${tokenAddress} --chain ${chain} --fields name,symbol,liquidity_usd,created_at`, apiKey, debugLog);
-  const r2  = run(2,  `nansen research token who-bought-sold --token ${tokenAddress} --chain ${chain} --limit 5`, apiKey, debugLog);
+  const r1 = run(1, `nansen research token info --token ${tokenAddress} --chain ${chain} --fields name,symbol,liquidity_usd,spot_metrics`, apiKey, debugLog);
+  const r2 = run(2, `nansen research token who-bought-sold --token ${tokenAddress} --chain ${chain} --limit 5`, apiKey, debugLog);
 
-  // ── Call 6 early to extract top holder for profiler calls ─────────────────
-  const r6  = run(6,  `nansen research token holders --token ${tokenAddress} --chain ${chain} --fields address,percentage,token_amount --limit 3`, apiKey, debugLog);
+  // ── Call 6 early to extract top holder ───────────────────────────────────
+  const r6 = run(6, `nansen research token holders --token ${tokenAddress} --chain ${chain} --fields address,token_amount --limit 3`, apiKey, debugLog);
 
-  // Extract top holder address — fall back to known whale for demo
-  let profilerAddress = FALLBACK_WHALE;
+  // Extract top trader address from call_2 for profiler calls
+  let topTraderAddress = null;
   try {
-    const holdersData = parse(r6);
-    const holders = Array.isArray(holdersData) ? holdersData : holdersData?.holders ?? [];
-    const extracted = holders[0]?.address ?? holders[0]?.wallet_address ?? holders[0]?.holder_address ?? null;
-    if (extracted) profilerAddress = extracted;
-  } catch {
-    // use fallback
-  }
-  debugLog.profilerAddress = profilerAddress;
-  debugLog.profilerAddressSource = profilerAddress === FALLBACK_WHALE ? 'fallback' : 'call6';
+    const arr = parseArray(r2.data);
+    topTraderAddress = arr?.[0]?.address ?? null;
+  } catch { /* use null */ }
+  debugLog.topTraderAddress = topTraderAddress;
+  debugLog.topTraderAddressSource = topTraderAddress ? 'call2' : 'none';
 
   // ── Batch 2: profiler calls (3, 4, 5) ────────────────────────────────────
-  const r3  = run(3,  `nansen research profiler labels --address ${profilerAddress}`, apiKey, debugLog);
-  const r4  = run(4,  `nansen research profiler pnl-summary --address ${profilerAddress}`, apiKey, debugLog);
-  const r5  = run(5,  `nansen research profiler transactions --address ${profilerAddress} --limit 3`, apiKey, debugLog);
+  const profilerTarget = topTraderAddress ?? '0x3304E22DDaa22bCdC5fCa2269b418046aE7b566A';
+  const r3 = run(3, `nansen research profiler pnl-summary --address ${profilerTarget}`, apiKey, debugLog);
+  const r4 = run(4, `nansen research profiler transactions --address ${profilerTarget} --limit 3`, apiKey, debugLog);
+  const r5 = run(5, `nansen research profiler labels --address ${profilerTarget}`, apiKey, debugLog);
 
   // ── Batch 3: remaining premium calls (7, 8, 9, 10) ───────────────────────
   const r7  = run(7,  `nansen research smart-money dex-trades --chain ${chain} --timeframe 24h --limit 3`, apiKey, debugLog);
@@ -264,15 +260,16 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   const r9  = run(9,  `nansen research token flows --token ${tokenAddress} --chain ${chain} --limit 3`, apiKey, debugLog);
   const r10 = run(10, `nansen research smart-money holdings --chain ${chain} --limit 3`, apiKey, debugLog);
 
-  // Results array indexed 0-9 → call numbers 1-10
+  // Results array: index 0–9 → call numbers 1–10
+  // results[0]=call_1, [1]=call_2, [2]=call_3(pnl), [3]=call_4(txns),
+  // [4]=call_5(labels), [5]=call_6(holders), [6]=call_7(sm dex),
+  // [7]=call_8(sm netflow), [8]=call_9(flows), [9]=call_10(sm holdings)
   const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10];
 
   // ── Write debug file ──────────────────────────────────────────────────────
   try {
     await fs.outputJson(DEBUG_PATH, debugLog, { spaces: 2 });
-  } catch {
-    // non-fatal
-  }
+  } catch { /* non-fatal */ }
 
   // ── Build call log ────────────────────────────────────────────────────────
   const callLog = results.map((r, i) => ({
@@ -283,7 +280,7 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   }));
 
   // ── Score ─────────────────────────────────────────────────────────────────
-  const { score, flags } = computeScore(results);
+  const { score, flags } = computeScore(results, topTraderAddress);
 
   // ── Credit estimate ───────────────────────────────────────────────────────
   const creditsUsed = results.reduce((sum, r, i) => {
@@ -295,11 +292,10 @@ export default async function scoreToken(tokenAddress, chain, apiKey) {
   // ── Token info ────────────────────────────────────────────────────────────
   let tokenInfo = { name: 'Unknown', symbol: 'UNKNOWN', address: tokenAddress };
   try {
-    const d = parseFirst(r1);
+    const json = JSON.parse(r1.data);
+    const d = json?.data?.data;
     if (d) tokenInfo = { name: d.name ?? tokenInfo.name, symbol: d.symbol ?? tokenInfo.symbol, address: tokenAddress };
-  } catch {
-    // use defaults
-  }
+  } catch { /* use defaults */ }
 
   return { score, flags, callLog, tokenInfo };
 }
