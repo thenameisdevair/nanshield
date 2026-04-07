@@ -93,5 +93,19 @@ export default async function runCheck(token, chain, options = {}) {
     writeReport(token, finalChain, result.score, result.flags, verdict, result.callLog, outputPath);
   }
 
+  // 10. What next?
+  console.log(chalk.yellow('\nWhat you can do:'));
+  if (verdict === 'CLEARED') {
+    console.log(chalk.gray(`  • Execute a trade:    nanshield trade ${token} --chain ${finalChain} --amount <n> --execute`));
+    console.log(chalk.gray(`  • Watch this token:   nanshield watch ${token} --chain ${finalChain} --interval 5`));
+    console.log(chalk.gray(`  • Deep AI analysis:   nanshield check ${token} --chain ${finalChain} --deep`));
+    console.log(chalk.gray(`  • Save full report:   nanshield check ${token} --chain ${finalChain} --report`));
+  } else {
+    console.log(chalk.gray(`  • Save risk report:   nanshield check ${token} --chain ${finalChain} --report`));
+    console.log(chalk.gray(`  • Deep AI analysis:   nanshield check ${token} --chain ${finalChain} --deep`));
+    console.log(chalk.gray(`  • Force trade anyway: nanshield trade ${token} --chain ${finalChain} --amount <n> --execute --force`));
+    console.log(chalk.gray(`  • Adjust threshold:   nanshield check ${token} --chain ${finalChain} --threshold 75`));
+  }
+
   return { score: result.score, flags: result.flags, passed: result.score < threshold };
 }

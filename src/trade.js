@@ -94,9 +94,13 @@ export default async function runTrade(token, chain, options = {}) {
   // 6. Gate logic
   console.log('');
   if (score >= threshold && !force) {
-    console.log(chalk.red(`⛔ Trade blocked by NanGuard. Score: ${score}/${threshold}`));
-    console.log(chalk.gray('Use --force to override at your own risk.'));
-    console.log(chalk.gray('Use --dry-run to simulate without executing.'));
+    console.log(chalk.red('⛔ Trade blocked by NanGuard.'));
+    console.log(chalk.yellow('What you can do:'));
+    console.log(chalk.gray('  • Review the flags above to understand the risks'));
+    console.log(chalk.gray(`  • Lower your threshold: nanshield trade ${token} --threshold 75 --execute`));
+    console.log(chalk.gray(`  • Override the gate:   nanshield trade ${token} --execute --force`));
+    console.log(chalk.gray(`  • Just get a quote:    nanshield trade ${token} --amount ${amount ?? '<n>'}`));
+    console.log(chalk.gray(`  • Research further:    nanshield check ${token} --deep --report`));
     process.exit(1);
   }
 
@@ -170,9 +174,18 @@ export default async function runTrade(token, chain, options = {}) {
     execSpinner.succeed(chalk.green('✅ Trade executed successfully'));
     console.log(chalk.green(raw));
 
+    console.log(chalk.green('✅ Transaction successful!'));
     if (txHash) {
-      console.log(chalk.gray(`Verify on Basescan: https://basescan.org/tx/${txHash}`));
+      console.log(chalk.cyan(`  Tx Hash:  ${txHash}`));
+      console.log(chalk.cyan(`  Explorer: https://basescan.org/tx/${txHash}`));
     }
+    console.log('');
+    console.log(chalk.yellow('Next steps:'));
+    if (txHash) {
+      console.log(chalk.gray(`  • Verify on Basescan: https://basescan.org/tx/${txHash}`));
+    }
+    console.log(chalk.gray(`  • Check your wallet: nansen research profiler balance --address <walletAddress> --chain base`));
+    console.log(chalk.gray(`  • Watch this token:  nanshield watch ${token} --chain ${finalChain} --interval 5`));
   } catch (err) {
     execSpinner.fail('Execution failed');
     const raw = err.stdout?.toString() || err.stderr?.toString() || err.message;
