@@ -122,7 +122,6 @@ export default async function runTrade(token, chain, options = {}) {
   // 8. Quote
   const quoteSpinner = ora('Getting quote from Nansen DEX...').start();
   let quoteId = null;
-  let quoteData = null;
 
   try {
     const unitFlag = amountUnit ? `--amount-unit ${amountUnit}` : `--amount-unit token`;
@@ -134,21 +133,15 @@ export default async function runTrade(token, chain, options = {}) {
       `--amount ${amount}`,
       unitFlag,
       `--wallet ${walletName}`,
-      `--pretty`,
     ].join(' ');
 
     const raw = run(quoteCmd, tradeEnv);
-    // nansen CLI may prefix stdout with human-readable text before the JSON
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in quote response: ' + raw);
-    const json = JSON.parse(jsonMatch[0]);
-    quoteId = json?.data?.quoteId ?? json?.data?.id ?? json?.quoteId ?? json?.id ?? null;
-    quoteData = json;
-    quoteSpinner.succeed(chalk.cyan(`Quote received: ${quoteId ?? '(id unavailable)'}`));
+    const quoteIdMatch = raw.match(/Quote ID:\s*([^\s\n]+)/);
+    if (!quoteIdMatch) throw new Error('Could not extract Quote ID from: ' + raw);
+    quoteId = quoteIdMatch[1].trim();
 
-    const rate = quoteData?.data?.rate ?? quoteData?.rate ?? null;
-    if (rate) console.log(chalk.gray(`  Rate: ${rate}`));
-    console.log(chalk.gray('  Expires in ~1 hour'));
+    quoteSpinner.succeed(chalk.cyan(`Quote received: ${quoteId}`));
+    console.log(chalk.cyan(raw));
   } catch (err) {
     quoteSpinner.fail('Quote failed');
     const raw = err.stdout?.toString() || err.stderr?.toString() || err.message;
@@ -171,16 +164,13 @@ export default async function runTrade(token, chain, options = {}) {
     ].join(' ');
 
     const raw = run(execCmd, tradeEnv);
-    // nansen CLI may prefix stdout with human-readable text before the JSON
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in execute response: ' + raw);
-    const execData = JSON.parse(jsonMatch[0]);
-    txHash = execData?.data?.txHash ?? execData?.txHash ?? execData?.hash ?? null;
+    const txMatch = raw.match(/[Tt]x(?:Hash)?[:\s]+([0x][a-fA-F0-9]{64})/);
+    txHash = txMatch ? txMatch[1] : null;
 
     execSpinner.succeed(chalk.green('✅ Trade executed successfully'));
+    console.log(chalk.green(raw));
 
     if (txHash) {
-      console.log(chalk.cyan(`Transaction: ${txHash}`));
       console.log(chalk.gray(`Verify on Basescan: https://basescan.org/tx/${txHash}`));
     }
   } catch (err) {
