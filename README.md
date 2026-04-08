@@ -1,9 +1,10 @@
-# NanGuard
+# NanShield
 
 > Security-gated DEX execution powered by Nansen onchain intelligence.
-> Don't trade blind. Scan first. Execute only if safe.
+> 16 Nansen API calls. 8 risk factors. Scan → Gate → Execute.
+> Integrates the nansen-trading ClawHub skill for DEX swaps on Solana and Base.
 
-NanGuard is a CLI security layer for DEX traders. Drop in a token address, and NanGuard fires 10 Nansen API calls — pulling liquidity depth, holder concentration, smart money flows, buyer profile, and top trader network quality — computes a 0-100 risk score across 7 factors, and either clears the trade for execution or blocks it with a full breakdown of what triggered the alert. If the scan passes, NanGuard hands off directly to `nansen trade` to execute the swap on-chain. Every decision is logged. Every trade is gated.
+NanShield is a CLI security layer for DEX traders. Drop in a token address (or name/symbol — NanShield resolves it), and NanShield fires 13 Nansen research calls — pulling liquidity depth, holder concentration, smart money flows, buyer profile, top trader network quality, PnL leaderboard, and profiler labels — computes a 0-100 risk score across 8 factors, and either clears the trade for execution or blocks it with a full breakdown of what triggered the alert. If the scan passes, NanShield hands off directly to `nansen trade` (via the nansen-trading ClawHub skill) to execute the swap on-chain. Every decision is logged. Every trade is gated.
 
 ---
 
@@ -17,13 +18,13 @@ NanGuard is a CLI security layer for DEX traders. Drop in a token address, and N
 
 ## The Solution
 
-NanGuard sits between you and the trade. Scans first across 10 Nansen API calls. Scores across 7 risk factors. Executes only if safe.
+NanShield sits between you and the trade. Scans first across 13 Nansen API calls. Scores across 8 risk factors. Executes only if safe.
 
 ---
 
 ## Proven On-Chain
 
-NanGuard has executed a real verified trade on Base mainnet.
+NanShield has executed a real verified trade on Base mainnet.
 
 **Tx Hash:** `0x3b3a0266f14dd14d1251a7eafc6802ebc01019a2a417e272c697746652095fcd`
 **Explorer:** https://basescan.org/tx/0x3b3a0266f14dd14d1251a7eafc6802ebc01019a2a417e272c697746652095fcd
@@ -36,7 +37,7 @@ NanGuard has executed a real verified trade on Base mainnet.
 # 1. Install nansen-cli
 npm install -g nansen-cli
 
-# 2. Install NanGuard from GitHub
+# 2. Install NanShield from GitHub
 npm install -g github:thenameisdevair/nanshield
 
 # 3. First-time setup
@@ -49,8 +50,6 @@ Get your Nansen API key: https://app.nansen.ai/auth/agent-setup
 ---
 
 ## Quick Start — No Setup Required
-
-You can pass credentials directly without running setup:
 
 ```bash
 # One-shot scan with inline key
@@ -75,18 +74,40 @@ nanshield setup
 
 ---
 
-### nanshield check \<token\>
+### nanshield discover
 
-One-shot security scan. Runs 10 Nansen API calls and returns a risk score with 7 scored factors.
+Discover trending tokens via Nansen token screener before scanning. Useful for finding new opportunities before aping in.
 
 ```bash
-# Basic scan
+nanshield discover --chain base --timeframe 24h
+nanshield discover --chain solana --timeframe 7d --limit 20
+nanshield discover --chain base --timeframe 1h --sort buy_volume:desc
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--chain` | `base` | `base`, `solana`, `ethereum` |
+| `--timeframe` | `24h` | `5m`, `1h`, `6h`, `24h`, `7d`, `30d` |
+| `--limit` | `10` | Number of results (1-50) |
+| `--sort` | `buy_volume:desc` | Sort field |
+
+---
+
+### nanshield check \<token\>
+
+One-shot security scan. Accepts a token address OR a name/symbol (e.g., `USDC` or `BRETT`). Runs 13 Nansen API calls and returns a risk score with 8 scored factors.
+
+```bash
+# Scan by address
 nanshield check 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 --chain base
 
-# Save full markdown report
+# Scan by name/symbol (auto-resolved via nansen search)
+nanshield check USDC --chain base
+
+# Save full markdown report with API call proof
 nanshield check 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 --chain base --report
 
-# Include AI threat assessment (costs extra credits)
+# Include AI threat assessment
 nanshield check 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 --chain base --deep
 
 # Custom risk threshold
@@ -105,7 +126,7 @@ nanshield check 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 --chain base --thresh
 
 ### nanshield trade \<token\>
 
-Security scan + conditional DEX execution via Nansen trading.
+Security scan + conditional DEX execution via the nansen-trading ClawHub skill.
 
 ```bash
 # Dry run — shows scan + quote, does not execute
@@ -115,6 +136,10 @@ nanshield trade 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
 # Full pipeline — scan, gate check, execute if safe
 nanshield trade 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
   --chain base --amount 1 --execute
+
+# Trade by USD amount (auto-converts via token price)
+nanshield trade 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
+  --chain base --usd 20 --execute
 
 # Override security gate (high risk — you were warned)
 nanshield trade 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
@@ -129,8 +154,10 @@ nanshield trade 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--amount` | required | Amount to trade |
+| `--amount` | — | Token amount to trade |
+| `--usd` | — | USD amount (auto-converts to token amount) |
 | `--amount-unit` | `token` | `token` or `base` |
+| `--from` | `USDC` | Token to spend |
 | `--execute` | `false` | Fire real trade if scan passes |
 | `--force` | `false` | Override blocked gate |
 | `--threshold` | `60` | Custom risk cutoff |
@@ -141,7 +168,7 @@ nanshield trade 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
 
 ### nanshield watch \<token\>
 
-Continuous monitor. Re-scans every N minutes and alerts when risk threshold is crossed. Logs everything to disk.
+Continuous monitor. Re-scans every N minutes and alerts when risk threshold is crossed or individual factors change. Shows delta between scans.
 
 ```bash
 nanshield watch 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
@@ -161,19 +188,10 @@ Logs saved to: `~/.nanshield/logs/<token>_<chain>_<YYYY-MM-DD>.log`
 
 ## Understanding The Risk Score
 
-NanGuard scores tokens from 0 to 100.  
+NanShield scores tokens from 0 to 100.  
 **Score below 60 = CLEARED. Score 60 or above = BLOCKED.**
 
-### Why 60?
-
-The threshold of 60 is calibrated so that a token needs to trigger at least 3 significant red flags before being blocked. A single red flag (like moderate holder concentration) scores ~10-20pts and won't block a trade alone. It takes a combination of signals — smart money exiting AND holder concentration AND suspicious buyer profile — to cross 60.
-
-Adjust the threshold per command with `--threshold`:
-- `--threshold 40` = stricter (blocks more trades, safer)
-- `--threshold 80` = looser (allows more trades, more risk)
-- Default `60` = balanced for most traders
-
-### The 7 Risk Factors
+### The 8 Risk Factors
 
 | Factor | Max Points | What Triggers It |
 |--------|-----------|-----------------|
@@ -182,8 +200,11 @@ Adjust the threshold per command with `--threshold`:
 | Top Trader Network | 10 | Top trader's counterparties all unlabeled |
 | Holder Concentration | 20 | Top wallet > 50% of tracked supply |
 | SM DEX Activity | 15 | Smart money selling young tokens |
-| SM Net Sentiment | 20 | Net SM outflow > $10k in 24h |
-| SM Holdings Trend | 15 | SM holdings declining across tracked tokens |
+| SM Net Sentiment | 15 | Net SM outflow > $10k in 24h |
+| SM Holdings Trend | 10 | SM holdings declining across tracked tokens |
+| PnL Dump Risk | 10 | All top traders in profit with high avg PnL |
+
+**Total max: 100**
 
 ### Score Guide
 
@@ -207,33 +228,71 @@ Score 80-100: CRITICAL RISK — Strong rug/dump signals.
 
 ---
 
-## The 13 Nansen API Calls
+## The 16 Nansen API Calls
 
 | # | Command | Purpose | Mode |
 |---|---------|---------|------|
-| 0 | `nansen agent` | AI threat assessment | `--deep` only |
-| 1 | `token info` | Liquidity and metadata | Always |
-| 2 | `who-bought-sold` | Buyer profile | Always |
-| 3 | `profiler counterparties` | Top trader network quality | Always |
-| 4 | `profiler pnl-summary` | Top trader track record | Always |
-| 5 | `profiler transactions` | Top trader behavior | Always |
-| 6 | `token holders` | Holder concentration | Always |
-| 7 | `sm dex-trades` | SM recent trades | Always |
-| 8 | `sm netflow` | SM sentiment | Always |
-| 9 | `token flows` | Flow anomaly | Always |
-| 10 | `sm holdings` | SM holdings trend | Always |
-| 11 | `nansen trade quote` | Get swap quote | `--execute` only |
-| 12 | `nansen trade execute` | Fire transaction | `--execute` only |
+| S | `nansen search "<input>"` | Resolve name/symbol to address | Name input only |
+| 1 | `nansen research token info` | Liquidity and metadata | Always |
+| 2 | `nansen research token who-bought-sold` | Buyer profile | Always |
+| 3 | `nansen research token holders` | Holder concentration | Always |
+| 4 | `nansen research token flows` | Flow anomaly | Always |
+| 5 | `nansen research token pnl` | PnL dump risk leaderboard | Always |
+| 6 | `nansen research smart-money dex-trades` | SM recent trades | Always |
+| 7 | `nansen research smart-money netflow` | SM sentiment | Always |
+| 8 | `nansen research smart-money holdings` | SM holdings trend | Always |
+| 9 | `nansen research profiler pnl-summary` | Top trader track record | Always |
+| 10 | `nansen research profiler transactions` | Top trader behavior | Always |
+| 11 | `nansen research profiler counterparties` | Top trader network quality | Always |
+| 12 | `nansen research profiler labels` (top trader) | Top trader identity | Always |
+| 13 | `nansen research profiler labels` (top holder) | Top holder identity | Always |
+| 14 | `nansen research token screener` | Trending token discovery | `discover` cmd |
+| 15 | `nansen agent` | AI threat assessment | `--deep` only |
+| 16 | `nansen trade quote` | Get swap quote | `--execute` only |
+| 17 | `nansen trade execute` | Fire transaction | `--execute` only |
 
 ---
 
-## Watch Mode Log Format
+## API Call Proof
+
+Every NanShield scan prints a numbered log of each nansen-cli command as it executes. The `--report` flag generates a full markdown report (`NANSHIELD-REPORT.md`) with:
+
+- Exact nansen-cli commands run (with all flags)
+- Status of each call (success/failure)
+- Key findings from each response
+- Risk score breakdown with all 8 factors
+- Trade execution details and tx hash (if applicable)
+
+---
+
+## Bonus Skill: nansen-trading
+
+NanShield integrates the [nansen-trading ClawHub skill](https://clawhub.ai/nansen-devops/nansen-trading) for DEX execution. The trade command implements the skill's two-step flow:
+
+1. `nansen trade quote` — Get a swap quote with route and price impact
+2. `nansen trade execute` — Fire the on-chain transaction
+
+NanShield extends this with:
+- USD-denominated trades (`--usd 20`) with auto-conversion via `nansen research token info`
+- `--amount-unit token` support for human-readable amounts
+- `--from` flag to specify the spending token (default: USDC)
+- Security gating — trades only execute if the risk score is below threshold
+- Trade logging to `~/.nanshield/logs/trades.json`
+
+---
+
+## Watch Mode Delta Alerts
+
+Watch mode shows what CHANGED between scans, not just the current score:
 
 ```
-[10:32:01] Score: 45 ✅ SAFE  — SM netflow positive
-[10:37:01] Score: 48 ✅ SAFE  — No significant change
-[10:42:01] Score: 61 ⛔ ALERT — SM holdings dropped 12% in 5min
-[10:42:01] >>> THRESHOLD CROSSED: was 48, now 61. Check your position.
+[14:32:01] Scan #1 — Score: 38/100 ✅ SAFE
+[14:37:01] Scan #2 — Score: 38/100 ✅ SAFE — No change
+[14:42:01] Scan #3 — Score: 52/100 ✅ SAFE — ⚠ 2 factors changed:
+           ↑ SM Net Sentiment: 5 → 12 (+7) — Outflow increased to -$45k
+           ↑ SM Holdings Trend: 3 → 8 (+5) — SM holdings dropped 8%
+[14:47:01] Scan #4 — Score: 64/100 ⛔ ALERT — THRESHOLD CROSSED (was 52)
+           ↑ PnL Dump Risk: 0 → 7 (+7) — Top traders taking profit
 ```
 
 Logs: `~/.nanshield/logs/<token8>_<chain>_<YYYY-MM-DD>.log`
@@ -246,23 +305,26 @@ Logs: `~/.nanshield/logs/<token8>_<chain>_<YYYY-MM-DD>.log`
 |----------|-------------|--------------|
 | token info | ~1 | ~10 |
 | who-bought-sold | 1 | 10 |
-| profiler pnl-summary | 1 | 10 |
-| profiler transactions | 1 | 10 |
-| profiler counterparties | 5 | 50 |
 | token holders | 5 | 50 |
+| token flows | 1 | 10 |
+| token pnl | 1 | 10 |
 | sm dex-trades | 5 | 50 |
 | sm netflow | 5 | 50 |
 | sm holdings | 5 | 50 |
+| profiler pnl-summary | 1 | 10 |
+| profiler transactions | 1 | 10 |
+| profiler counterparties | 5 | 50 |
+| profiler labels (×2) | 2 | 20 |
 | nansen agent (`--deep`) | ~20 | ~200 |
 
 **Per scan cost:**
 
-| Plan | Basic scan | Deep scan (`--deep`) |
-|------|-----------|---------------------|
-| Pro | ~21 credits | ~41 credits |
-| Free | ~210 credits | ~410 credits |
+| Plan | Basic scan (13 calls) | Deep scan (`--deep`) |
+|------|-----------------------|---------------------|
+| Pro | ~33 credits | ~53 credits |
+| Free | ~330 credits | ~530 credits |
 
-> Free tier (100 one-time credits) is not sufficient for a full scan. NanGuard requires a Nansen Pro API key.
+> Free tier (100 one-time credits) is not sufficient for a full scan. NanShield requires a Nansen Pro API key.
 >
 > Alternative: x402 pay-per-call (~$0.26/scan on Base). Fund a wallet and nansen-cli handles payment automatically.
 
@@ -279,7 +341,6 @@ nansen wallet create
 
 # 3. Fund it with ETH on Base (for gas)
 # Send ~$1 worth of ETH on Base to same address
-# Minimum ~$0.50 ETH for gas fees
 
 # 4. Set wallet password
 echo "NANSEN_WALLET_PASSWORD=yourpassword" > ~/.nansen/.env
@@ -315,36 +376,43 @@ nanshield trade <token> --chain base --amount 1 --execute
 
 ## Real Trader Workflows
 
-**1. Alpha group drops a CA — check before aping**
+**1. Discover trending tokens first, then scan the top one**
+```bash
+nanshield discover --chain base --timeframe 24h
+nanshield check <address-from-above> --chain base --report
+```
+
+**2. Alpha group drops a CA — check before aping**
 ```bash
 nanshield check <token> --chain base --report
 ```
 
-**2. Scan and auto-execute in one command**
+**3. Scan and auto-execute in one command**
 ```bash
 nanshield trade <token> --chain base --amount 1 --execute
 ```
 
-**3. Already in a position — watch for smart money exits**
+**4. Trade $20 worth without calculating token amounts**
+```bash
+nanshield trade <token> --chain base --usd 20 --execute
+```
+
+**5. Already in a position — watch for smart money exits**
 ```bash
 nanshield watch <token> --chain base --interval 5
 ```
 
-**4. Quick alias for daily use**
+**6. Quick alias for daily use**
 ```bash
 alias ns="nanshield check"
 ns <token> --chain base
-```
-
-**5. Updating NanGuard**
-```bash
-npm install -g github:thenameisdevair/nanshield
 ```
 
 ---
 
 ## Built For
 
-Nansen CLI Challenge — Week 4  
-Builder: thenameisdevair  
+Nansen CLI Challenge — Week 4
+Bonus Skill: [nansen-trading](https://clawhub.ai/nansen-devops/nansen-trading)
+Builder: thenameisdevair
 GitHub: https://github.com/thenameisdevair/nanshield
