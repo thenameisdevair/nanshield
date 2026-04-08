@@ -1,6 +1,6 @@
 {
   "name": "nanshield",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "Security-gated DEX execution CLI built on nansen-cli",
   "bin": {
     "nanshield": "src/index.js"
