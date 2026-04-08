@@ -51,37 +51,30 @@ export default async function runCheck(token, chain, options = {}) {
       process.exit(1);
     }
 
-    let allResults = [];
+    let tokens = [];
     try {
-      const parsed = JSON.parse(searchResult.data);
-      const inner = parsed?.data?.data ?? parsed?.data ?? [];
-      allResults = Array.isArray(inner) ? inner : [inner];
+      const json = JSON.parse(searchResult.data);
+      tokens = json?.data?.tokens ?? [];
     } catch {}
 
-    if (allResults.length === 0) {
+    if (tokens.length === 0) {
       searchSpinner.fail('');
-      console.log(chalk.red(`Could not resolve "${token}" on ${finalChain}.`));
-      console.log(chalk.gray(`Try: nanshield check <contract_address> --chain ${finalChain}`));
+      console.log(chalk.red(`Could not resolve "${token}". Try using the contract address.`));
       process.exit(1);
     }
 
-    // Filter by requested chain
-    const onChain = allResults.filter(r => !r.chain || r.chain === finalChain);
+    const chainMatches = tokens.filter(t => t.chain === finalChain);
 
-    if (onChain.length === 0) {
-      const available = [...new Set(allResults.map(r => r.chain).filter(Boolean))];
+    if (chainMatches.length === 0) {
+      const availableChains = [...new Set(tokens.map(t => t.chain).filter(Boolean))].join(', ');
       searchSpinner.fail('');
-      console.log(chalk.yellow(`"${token}" not found on ${finalChain}.${available.length ? ` Available on: ${available.join(', ')}` : ''}`));
-      if (available.length) {
-        console.log(chalk.gray(`Try: nanshield check ${token} --chain ${available[0]}`));
-      } else {
-        console.log(chalk.gray(`Try: nanshield check <contract_address> --chain ${finalChain}`));
-      }
+      console.log(chalk.yellow(`${token} not found on ${finalChain}. Available on: ${availableChains}`));
+      console.log(chalk.gray(`Try: nanshield check ${token} --chain ${tokens[0].chain}`));
       process.exit(1);
     }
 
-    const first = onChain[0];
-    const addr = first.token_address ?? first.address;
+    const first = chainMatches[0];
+    const addr = first.address;
     if (!addr) {
       searchSpinner.fail('');
       console.log(chalk.red(`Could not resolve "${token}" to a token address. Use a contract address instead.`));
@@ -89,8 +82,10 @@ export default async function runCheck(token, chain, options = {}) {
     }
 
     resolvedToken = addr;
-    const name = first.token_symbol ?? first.symbol ?? first.name ?? '';
-    searchSpinner.succeed(chalk.cyan(`🔍 Resolved "${token}" → ${resolvedToken}${name ? ` (${name})` : ''}`));
+    const name = first.symbol ?? first.name ?? '';
+    const shortAddr = `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+    searchSpinner.stop();
+    console.log(chalk.green(`✓ Resolved ${token} → ${shortAddr} on ${finalChain}`));
     searchCallEntry = { callNum: 'S', command: searchCmd, status: 'ok', summary: `Resolved to ${resolvedToken}`, ms: searchResult.ms };
   }
 
