@@ -17,8 +17,7 @@ export function printBanner() {
 export function printScoreBar(score, threshold) {
   const BAR_WIDTH = 20;
   const filled = Math.round((score / 100) * BAR_WIDTH);
-  const empty = BAR_WIDTH - filled;
-  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  const bar = '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
   const isBlocked = score >= threshold;
   const label = isBlocked ? 'HIGH RISK - TRADE BLOCKED' : 'LOW RISK - TRADE CLEARED';
   const color = isBlocked ? chalk.red : chalk.green;
@@ -27,12 +26,41 @@ export function printScoreBar(score, threshold) {
   console.log(color(`${bar}  ${score}/100  [${label}]`));
 }
 
+// ── 8-factor score breakdown table ───────────────────────────────────────────
+export function printScoreBreakdown(factors) {
+  if (!factors || factors.length === 0) return;
+
+  const INNER = 45;
+  const border = '─'.repeat(INNER + 2);
+
+  console.log('');
+  console.log(`┌${border}┐`);
+
+  for (const f of factors) {
+    const scoreStr = `${f.score}/${f.max}`;
+    const name = f.name.padEnd(24);
+    const scored = scoreStr.padStart(5);
+    const lbl = f.label ? `  ${f.label}` : '';
+    const line = `  ${name} ${scored}${lbl}`;
+    const padded = line.padEnd(INNER);
+    const color = f.score === 0 ? chalk.green : f.score >= f.max * 0.75 ? chalk.red : chalk.yellow;
+    console.log(`│${color(padded)} │`);
+  }
+
+  const total = factors.reduce((s, f) => s + f.score, 0);
+  const totalStr = `  ${'TOTAL'.padEnd(24)} ${String(total).padStart(3)}/100`;
+  console.log(`├${'─'.repeat(INNER + 2)}┤`);
+  console.log(`│${chalk.bold(totalStr.padEnd(INNER))} │`);
+  console.log(`└${border}┘`);
+}
+
+// Kept for backward compatibility (used by watch.js)
 export function printFlags(flags) {
   if (!flags || flags.length === 0) return;
   console.log(chalk.bold('\nRISK FLAGS'));
-  for (const { emoji, label, detail, points } of flags) {
+  for (const { emoji, label, detail, points, max } of flags) {
     const paddedLabel = label.padEnd(24);
-    const pts = points > 0 ? chalk.red(`+${points}pts`) : chalk.green(`${points}pts`);
+    const pts = points > 0 ? chalk.red(`+${points}${max ? `/${max}` : ''}pts`) : chalk.green(`${points}pts`);
     console.log(`${emoji} ${chalk.bold(paddedLabel)} ${detail.padEnd(44)} ${pts}`);
   }
 }
@@ -56,59 +84,134 @@ export function printWatchAlert(timestamp, score, threshold, change) {
   console.log(isBlocked ? chalk.red(msg) : chalk.yellow(msg));
 }
 
-export function writeReport(token, chain, score, flags, verdict, callLog = [], outputPath = './NANSHIELD-REPORT.md') {
+// ── API call proof summary ────────────────────────────────────────────────────
+export function printApiCallProof(callLog, tradeMode = false) {
+  if (!callLog || callLog.length === 0) return;
+
+  const researchCalls = callLog.filter(c => typeof c.callNum === 'number' && c.callNum >= 1 && c.callNum <= 13);
+  const tradeCalls    = callLog.filter(c => c.callNum === 'Q' || c.callNum === 'E' || c.command?.includes('nansen trade'));
+  const agentCalls    = callLog.filter(c => c.callNum === 0 || c.command?.includes('nansen agent'));
+
+  const totalR = researchCalls.length;
+  const totalT = tradeCalls.length;
+  const totalA = agentCalls.length;
+  const total  = totalR + totalT + totalA;
+
+  const parts = [`${totalR} research`];
+  if (totalA) parts.push(`${totalA} agent`);
+  if (totalT) parts.push(`${totalT} trade`);
+
+  const endpointNames = researchCalls
+    .map(c => {
+      const m = c.command?.match(/nansen research (\S+) (\S+)/);
+      return m ? `${m[1]}-${m[2]}` : null;
+    })
+    .filter(Boolean);
+
+  if (tradeMode) {
+    tradeCalls.forEach(c => {
+      const m = c.command?.match(/nansen trade (\S+)/);
+      if (m) endpointNames.push(`trade-${m[1]}`);
+    });
+  }
+
+  const DIVIDER = '─'.repeat(58);
+  console.log('');
+  console.log(chalk.gray(DIVIDER));
+  console.log(chalk.bold(`  Nansen API Calls: ${parts.join(' + ')} = ${total} total`));
+
+  // Chunk endpoint names for wrapping
+  const MAX_LINE = 56;
+  let line = '  Unique endpoints: ';
+  const epLines = [];
+  for (const ep of endpointNames) {
+    if ((line + ep + ', ').length > MAX_LINE) {
+      epLines.push(line.replace(/,\s*$/, ''));
+      line = '    ' + ep + ', ';
+    } else {
+      line += ep + ', ';
+    }
+  }
+  if (line.trim().length > 0) epLines.push(line.replace(/,\s*$/, ''));
+  epLines.forEach(l => console.log(chalk.gray(l)));
+
+  if (tradeMode) {
+    console.log(chalk.cyan('  Bonus skill: nansen-trading (clawhub.ai/nansen-devops/nansen-trading)'));
+  }
+  console.log(chalk.gray(DIVIDER));
+  console.log('');
+}
+
+// ── Markdown report writer ────────────────────────────────────────────────────
+export function writeReport(token, chain, score, factors, verdict, callLog = [], outputPath = './NANSHIELD-REPORT.md', agentText = null) {
   const timestamp = new Date().toISOString();
   const isBlocked = verdict === 'BLOCKED';
-
-  const flagRows = (flags || [])
-    .map(({ emoji, label, detail, points }) =>
-      `| ${emoji} ${label} | ${detail} | ${points > 0 ? `+${points}` : points} |`
-    )
-    .join('\n');
-
-  const flagTable = flagRows
-    ? `| Flag | Detail | Points |\n|------|--------|--------|\n${flagRows}`
-    : '_No flags raised._';
 
   const verdictLine = isBlocked
     ? `⛔ **TRADE BLOCKED** — Score exceeds threshold. Use \`--force\` to override.`
     : `✅ **TRADE CLEARED** — Risk score within safe threshold.`;
 
-  const report = `# NanGuard Risk Report
+  // ── API call log table ──────────────────────────────────────────────────
+  const callRows = (callLog || []).map(({ callNum, command, status, summary, ms }) => {
+    const numStr = callNum === 'S' ? 'S' : String(callNum).padStart(2);
+    const cmdShort = (command || '').length > 70 ? command.slice(0, 67) + '...' : command;
+    const icon = status === 'ok' ? '✓' : '✗';
+    return `| ${numStr} | \`${cmdShort}\` | ${icon} | ${summary || ''} |`;
+  }).join('\n');
 
-**Token:** \`${token}\`
-**Chain:** ${chain}
-**Timestamp:** ${timestamp}
-**Score:** ${score}/100
-**Verdict:** ${verdictLine}
+  // ── Factor table ────────────────────────────────────────────────────────
+  const factorRows = (factors || []).map(f =>
+    `| ${f.name} | ${f.score} | ${f.max} | ${f.detail} |`
+  ).join('\n');
+  const total = (factors || []).reduce((s, f) => s + f.score, 0);
 
+  // ── Deep analysis section ───────────────────────────────────────────────
+  const deepSection = agentText ? `
 ---
 
-## Risk Score
+## Deep Analysis (nansen agent)
 
-\`\`\`
-${'█'.repeat(Math.round((score / 100) * 20))}${'░'.repeat(20 - Math.round((score / 100) * 20))}  ${score}/100
-\`\`\`
+${agentText}
+` : '';
 
----
+  const report = `# NanShield Security Report
 
-## Risk Flags
-
-${flagTable}
+**Token**: \`${token}\`
+**Chain**: ${chain}
+**Scanned**: ${timestamp}
+**NanShield Version**: 2.0.0
+**Risk Score**: ${score}/100 — ${verdict}
 
 ---
 
 ## API Call Log
 
-| # | Command | Status | Time |
-|---|---------|--------|------|
-${(callLog || []).map(({ callNum, command, status, ms }) =>
-  `| ${callNum} | \`${command.length > 60 ? command.slice(0, 57) + '...' : command}\` | ${status === 'ok' ? '✓' : '✗'} | ${ms}ms |`
-).join('\n')}
+| # | Nansen CLI Command | Status | Key Finding |
+|---|-------------------|--------|-------------|
+${callRows}
+
+**Total API calls**: ${callLog.length} (${callLog.filter(c => c.status === 'ok').length} succeeded)
 
 ---
 
-_Generated by NanGuard_
+## Risk Score Breakdown
+
+| Factor | Score | Max | Assessment |
+|--------|-------|-----|-----------|
+${factorRows}
+| **TOTAL** | **${total}** | **100** | **${verdict}** |
+
+---
+
+## Verdict
+
+${verdictLine}
+${deepSection}
+---
+
+*Generated by NanShield v2.0.0 — Security-gated DEX execution powered by Nansen onchain intelligence.*
+*nansen-trading skill: https://clawhub.ai/nansen-devops/nansen-trading*
+*GitHub: https://github.com/thenameisdevair/nanshield*
 `;
 
   const resolvedPath = path.resolve(outputPath);
