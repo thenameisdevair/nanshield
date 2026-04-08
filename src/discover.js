@@ -79,11 +79,14 @@ export default async function runDiscover(argv = {}) {
 
   // 5. Table rows
   tokens.forEach((t, i) => {
-    const symbol  = (t.symbol ?? t.name ?? 'UNKNOWN').slice(0, 9).padEnd(COL.token);
-    const addr    = truncateAddr(t.address ?? t.contract_address ?? '').padEnd(COL.addr);
+    const symbol  = (t.token_symbol ?? t.symbol ?? t.name ?? '—').slice(0, 9).padEnd(COL.token);
+    const rawAddr = t.token_address ?? t.address ?? t.contract_address ?? '';
+    const addr    = truncateAddr(rawAddr).padEnd(COL.addr);
     const buyVol  = ('$' + fmtUsd(t.buy_volume_usd ?? t.volume_buy_usd)).padStart(COL.buy);
     const sellVol = ('$' + fmtUsd(t.sell_volume_usd ?? t.volume_sell_usd)).padStart(COL.sell);
-    const net     = t.buy_volume_usd - t.sell_volume_usd;
+    const netRaw  = t.net_flow_usd ?? t.net_flow_1h_usd ?? t.net_flow_24h_usd
+                    ?? ((t.buy_volume_usd ?? 0) - (t.sell_volume_usd ?? 0));
+    const net     = netRaw ?? 0;
     const netSign = net >= 0 ? '+' : '';
     const netStr  = (`${netSign}$${fmtUsd(net)}`).padStart(COL.net);
     const netColor = net >= 0 ? chalk.green : chalk.red;

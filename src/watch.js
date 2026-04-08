@@ -63,8 +63,9 @@ export default async function runWatch(token, chain, options = {}) {
   console.log(chalk.gray(`Polling every ${interval} minutes. Ctrl+C to stop.`));
   printBanner();
 
-  let previousScore   = null;
-  let previousFactors = null;
+  let previousScore    = null;
+  let previousFactors  = null;
+  let lastKnownScores  = {};
   let scanNum = 0;
 
   async function runScan() {
@@ -74,7 +75,7 @@ export default async function runWatch(token, chain, options = {}) {
 
     let result;
     try {
-      result = await scoreToken(token, finalChain, apiKey);
+      result = await scoreToken(token, finalChain, apiKey, false, null, lastKnownScores);
     } catch (err) {
       spinner.stop();
       const errLine = `[${ts}] ERROR — ${err.message}`;
@@ -84,6 +85,7 @@ export default async function runWatch(token, chain, options = {}) {
     }
     spinner.stop();
 
+    lastKnownScores = result.lastKnownScores ?? lastKnownScores;
     const { score, factors } = result;
     const isBlocked = score >= threshold;
     const statusIcon  = isBlocked ? '⛔' : '✅';

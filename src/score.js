@@ -212,12 +212,12 @@ function scorePnlDumpRisk(result) {
 }
 
 // ── Compute all 8 factors ─────────────────────────────────────────────────────
-export function computeScore(results, topTraderAddress) {
+export function computeScore(results, topTraderAddress, lastKnownScores = {}) {
   // results indices:
   // [0]=tokenInfo [1]=whoBoughtSold [2]=holders [3]=flows [4]=tokenPnl
   // [5]=smDex [6]=smNetflow [7]=smHoldings [8]=profPnl [9]=profTxns
   // [10]=profCounterparties [11]=profLabels [12]=deployerLabels
-  const factors = [
+  const rawFactors = [
     scoreAgeLiquidity(results[0]),
     scoreBuyerProfile(results[1]),
     scoreTopTraderNetwork(results[10], topTraderAddress),
@@ -227,6 +227,21 @@ export function computeScore(results, topTraderAddress) {
     scoreSmHoldingsTrend(results[7]),
     scorePnlDumpRisk(results[4]),
   ];
+
+  // Apply lastKnownScores: if a factor returns no data, use the previous
+  // successful score so watch mode doesn't reset to 0 on transient failures.
+  const updatedLastKnown = { ...lastKnownScores };
+  const factors = rawFactors.map(f => {
+    if (f.label === 'No data' || f.label === 'No PnL data') {
+      const lk = lastKnownScores[f.name];
+      if (lk !== undefined) {
+        return { ...f, score: lk.score, label: lk.label, detail: lk.detail + ' (last known)' };
+      }
+      return f;
+    }
+    updatedLastKnown[f.name] = { score: f.score, label: f.label, detail: f.detail };
+    return f;
+  });
 
   const totalScore = Math.min(factors.reduce((s, f) => s + f.score, 0), 100);
 
@@ -238,11 +253,11 @@ export function computeScore(results, topTraderAddress) {
     max: f.max,
   }));
 
-  return { score: totalScore, flags, factors };
+  return { score: totalScore, flags, factors, lastKnownScores: updatedLastKnown };
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
-export default async function scoreToken(tokenAddress, chain, apiKey, deep = false, onProgress = null) {
+export default async function scoreToken(tokenAddress, chain, apiKey, deep = false, onProgress = null, lastKnownScores = {}) {
   resetCallLog();
   const debugLog = { token: tokenAddress, chain, timestamp: new Date().toISOString() };
 
@@ -289,11 +304,11 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   const r3 = runWith(3, 'Token Holders',
     `nansen research token holders --token ${tokenAddress} --chain ${chain} --fields address,token_amount --limit 3`);
 
-  // Extract key addresses
-  let topTraderAddress = null;
-  try { topTraderAddress = parseArray(r2.data)?.[0]?.address ?? null; } catch {}
-  let topHolderAddress = null;
-  try { topHolderAddress = parseArray(r3.data)?.[0]?.address ?? null; } catch {}
+  // Extract key addresses — explicit length check prevents undefined access
+  const whoData = parseArray(r2.data);
+  const topTraderAddress = (whoData && whoData.length > 0) ? (whoData[0].address ?? null) : null;
+  const holderData = parseArray(r3.data);
+  const topHolderAddress = (holderData && holderData.length > 0) ? (holderData[0].address ?? null) : null;
   debugLog.topTraderAddress = topTraderAddress;
   debugLog.topHolderAddress = topHolderAddress;
 
@@ -333,7 +348,7 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   const callLog = agentCallEntry ? [agentCallEntry, ...researchCalls] : researchCalls;
 
   // ── Score ─────────────────────────────────────────────────────────────────
-  const { score, flags, factors } = computeScore(results, topTraderAddress);
+  const { score, flags, factors, lastKnownScores: updatedLastKnown } = computeScore(results, topTraderAddress, lastKnownScores);
 
   // ── Token info ────────────────────────────────────────────────────────────
   let tokenInfo = { name: 'Unknown', symbol: 'UNKNOWN', address: tokenAddress };
@@ -347,5 +362,5 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   const creditsUsed = results.filter(r => r.ok).length * 3; // rough estimate
   console.error(`Estimated credits used: ~${creditsUsed}${deep ? ' + ~20 (agent)' : ''}`);
 
-  return { score, flags, factors, callLog, tokenInfo, agentAssessment, topTraderAddress, topHolderAddress };
+  return { score, flags, factors, callLog, tokenInfo, agentAssessment, topTraderAddress, topHolderAddress, lastKnownScores: updatedLastKnown };
 }
