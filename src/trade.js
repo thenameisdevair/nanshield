@@ -226,8 +226,24 @@ export default async function runTrade(token, chain, options = {}) {
   const execSpinner = ora('  [15/16] Executing trade ...').start();
   let txHash = null;
 
+  // Re-read ~/.nansen/.env immediately before execute to ensure
+  // NANSEN_WALLET_PASSWORD is explicitly present in the child env.
+  let executeEnv = { ...tradeEnv };
   try {
-    const raw = run(execCmd, tradeEnv);
+    const envPath = path.join(os.homedir(), '.nansen', '.env');
+    const envContent = await fs.readFile(envPath, 'utf8');
+    const walletPass = envContent.match(/NANSEN_WALLET_PASSWORD=(.+)/)?.[1]?.trim();
+    if (walletPass) {
+      executeEnv = { ...process.env, NANSEN_API_KEY: apiKey, NANSEN_WALLET_PASSWORD: walletPass };
+    }
+  } catch { /* fall back to tradeEnv already set */ }
+
+  try {
+    const raw = execSync(execCmd, {
+      env: executeEnv,
+      stdio: 'pipe',
+      timeout: 60000,
+    }).toString().trim();
     const txMatch = raw.match(/(?:tx|transaction|hash)[:\s]+([0-9a-fA-Fx]{66})/i);
     txHash = txMatch ? txMatch[1] : null;
 
