@@ -1,10 +1,39 @@
-# NanShield
+# NanShield v2
 
 > Security-gated DEX execution powered by Nansen onchain intelligence.
-> 16 Nansen API calls. 8 risk factors. Scan → Gate → Execute.
+> 17 Nansen API calls. 8 risk factors. Scan → Gate → Execute.
 > Integrates the nansen-trading ClawHub skill for DEX swaps on Solana and Base.
 
-NanShield is a CLI security layer for DEX traders. Drop in a token address (or name/symbol — NanShield resolves it), and NanShield fires 13 Nansen research calls — pulling liquidity depth, holder concentration, smart money flows, buyer profile, top trader network quality, PnL leaderboard, and profiler labels — computes a 0-100 risk score across 8 factors, and either clears the trade for execution or blocks it with a full breakdown of what triggered the alert. If the scan passes, NanShield hands off directly to `nansen trade` (via the nansen-trading ClawHub skill) to execute the swap on-chain. Every decision is logged. Every trade is gated.
+NanShield is a CLI security layer for DEX traders. Drop in a token address (or name/symbol — NanShield resolves it), and NanShield fires 14 Nansen research calls — pulling liquidity depth, holder concentration, smart money flows, SM historical positioning, buyer profile, top trader network quality, PnL leaderboard, and profiler labels — computes a 0-100 risk score across 8 factors, and either clears the trade for execution or blocks it with a full breakdown. AI synthesis fires on every scan. If the scan passes, NanShield hands off directly to `nansen trade` (via the nansen-trading ClawHub skill) to execute the swap on-chain. Every decision is logged. Every trade is gated.
+
+---
+
+## What's New in v2
+
+- **Animated terminal scan reveal** — each API call lands sequentially with a 120ms delay for screen-recording clarity
+- **HTML intelligence report** — self-contained dark-theme report with risk gauge, SM netflow chart, holder composition, trade proof, and API call grid. Auto-opens in browser.
+- **Telegram watch alerts** — threshold crossed, factor delta, monitoring stopped, and force-trade alert types
+- **Detached watch mode via pm2** — `--detach` flag spawns a background process. VPS-ready, survives reboots.
+- **AI synthesis on every scan** — nansen agent now fires on standard scans (not just `--deep`). `--deep` uses `--expert`.
+- **Path-to-clearance advisor** — borderline scores (40-79) show per-factor conditions that would reduce each flag to 0
+- **SM historical-holdings added to standard scan** — call #14, always-on, improves SM Holdings Trend factor accuracy
+- **Auto-report on every trade execution** — HTML report with tx hash proof generated automatically, no `--report` needed
+- **`nanshield demo` command** — full pipeline in one run: discover → scan → quote with credit warning
+
+---
+
+## VPS Quick Start — 24/7 Monitoring
+
+```bash
+# Deploy NanShield on a VPS for 24/7 monitoring
+npm install -g pm2 nansen-cli
+npm install -g github:thenameisdevair/nanshield
+nanshield setup           # enter API key + TG credentials
+nanshield watch <token> --chain base --tg --detach
+pm2 save && pm2 startup
+# Now monitoring survives reboots
+# Alerts fire to Telegram while you sleep
+```
 
 ---
 
@@ -173,6 +202,12 @@ Continuous monitor. Re-scans every N minutes and alerts when risk threshold is c
 ```bash
 nanshield watch 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb \
   --chain base --interval 5
+
+# With Telegram alerts
+nanshield watch <token> --chain base --tg
+
+# Detached background process (VPS / 24/7)
+nanshield watch <token> --chain base --tg --detach
 ```
 
 Logs saved to: `~/.nanshield/logs/<token>_<chain>_<YYYY-MM-DD>.log`
@@ -182,7 +217,21 @@ Logs saved to: `~/.nanshield/logs/<token>_<chain>_<YYYY-MM-DD>.log`
 | `--chain` | `base` | Chain to monitor |
 | `--interval` | `5` | Poll interval in minutes |
 | `--threshold` | `60` | Score that triggers alert |
+| `--tg` | `false` | Send Telegram alerts on threshold cross / factor change |
+| `--detach` | `false` | Spawn as detached pm2 background process |
 | `--api-key` | — | Pass API key directly |
+
+---
+
+### nanshield demo
+
+Full end-to-end pipeline in one command: discover a trending token → scan it → fetch a trade quote. Shows the complete NanShield flow with credit usage warning.
+
+```bash
+nanshield demo --chain base
+```
+
+Uses approximately 55 Nansen credits. Prompts for confirmation before starting.
 
 ---
 
@@ -228,7 +277,7 @@ Score 80-100: CRITICAL RISK — Strong rug/dump signals.
 
 ---
 
-## The 16 Nansen API Calls
+## The 17 Standard Nansen API Calls
 
 | # | Command | Purpose | Mode |
 |---|---------|---------|------|
@@ -246,10 +295,11 @@ Score 80-100: CRITICAL RISK — Strong rug/dump signals.
 | 11 | `nansen research profiler counterparties` | Top trader network quality | Always |
 | 12 | `nansen research profiler labels` (top trader) | Top trader identity | Always |
 | 13 | `nansen research profiler labels` (top holder) | Top holder identity | Always |
-| 14 | `nansen research token screener` | Trending token discovery | `discover` cmd |
-| 15 | `nansen agent` | AI threat assessment | `--deep` only |
-| 16 | `nansen trade quote` | Get swap quote | `--execute` only |
-| 17 | `nansen trade execute` | Fire transaction | `--execute` only |
+| 14 | `nansen research smart-money historical-holdings` | SM positioning over time | Always (v2 NEW) |
+| 15 | `nansen agent "<synthesis>"` | AI risk synthesis | Standard; `--expert` on `--deep` |
+| 16 | `nansen research token screener` | Trending token discovery | `discover` / `demo` cmd |
+| 17 | `nansen trade quote` | Get swap quote | `--execute` only |
+| 18 | `nansen trade execute` | Fire transaction | `--execute` only |
 
 ---
 
