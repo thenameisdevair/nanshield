@@ -1,11 +1,10 @@
-import { execSync } from 'child_process';
 import os from 'os';
 import path from 'path';
 import fs from 'fs-extra';
-import { runNansen, parseData, parseArray, fmt, logCall, resetCallLog, getCallLog } from './nansen.js';
+import { runNansen, runAgentSynthesis, parseData, parseArray, fmt, logCall, resetCallLog, getCallLog } from './nansen.js';
 
 const DEBUG_PATH = path.join(os.homedir(), '.nanshield', 'debug-last-run.json');
-const TOTAL_CALLS = 13;
+const TOTAL_CALLS = 14;
 
 // ── Per-call summary extractor ────────────────────────────────────────────────
 function extractSummary(callNum, result) {
@@ -217,6 +216,12 @@ export function computeScore(results, topTraderAddress, lastKnownScores = {}) {
   // [0]=tokenInfo [1]=whoBoughtSold [2]=holders [3]=flows [4]=tokenPnl
   // [5]=smDex [6]=smNetflow [7]=smHoldings [8]=profPnl [9]=profTxns
   // [10]=profCounterparties [11]=profLabels [12]=deployerLabels
+  // [13]=smHistoricalHoldings (call #14)
+  //
+  // SM Holdings Trend uses smHistoricalHoldings ([13]) when available,
+  // falling back to smHoldings ([7]) for backward compatibility.
+  const smHoldingsResult = (results[13] && results[13].ok) ? results[13] : results[7];
+
   const rawFactors = [
     scoreAgeLiquidity(results[0]),
     scoreBuyerProfile(results[1]),
@@ -224,7 +229,7 @@ export function computeScore(results, topTraderAddress, lastKnownScores = {}) {
     scoreHolderConcentration(results[2]),
     scoreSmDexActivity(results[5]),
     scoreSmNetSentiment(results[6]),
-    scoreSmHoldingsTrend(results[7]),
+    scoreSmHoldingsTrend(smHoldingsResult),
     scorePnlDumpRisk(results[4]),
   ];
 
@@ -271,30 +276,9 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
     return result;
   }
 
-  // ── Call 0: nansen agent (deep mode only) ────────────────────────────────
+  // ── Calls 1-13 run first; agent fires after scoring (needs factor summary) ──
   let agentAssessment = null;
   let agentCallEntry = null;
-  if (deep) {
-    const question = `Analyze token ${tokenAddress} on ${chain}: are there any rug pull signals, smart money exits, unusual holder concentration, or suspicious trading patterns in the last 24 hours? Give a risk assessment in 2-3 sentences.`;
-    const agentCmd = `nansen agent "${question.replace(/"/g, '\\"')}"`;
-    const agentStart = Date.now();
-    try {
-      const raw = execSync(agentCmd, {
-        env: { ...process.env, NANSEN_API_KEY: apiKey },
-        stdio: 'pipe',
-        timeout: 60000,
-      }).toString().trim();
-      const ms = Date.now() - agentStart;
-      agentAssessment = raw;
-      debugLog['call_0'] = { command: agentCmd, status: 'ok', ms, raw: raw.slice(0, 1000) };
-      agentCallEntry = { callNum: 0, command: agentCmd, status: 'ok', summary: 'AI assessment complete', ms };
-    } catch (err) {
-      const ms = Date.now() - agentStart;
-      const errOut = err.stdout?.toString() || err.stderr?.toString() || err.message;
-      debugLog['call_0'] = { command: agentCmd, status: 'failed', ms, error: errOut.slice(0, 500) };
-      agentCallEntry = { callNum: 0, command: agentCmd, status: 'failed', summary: 'Agent call failed', ms };
-    }
-  }
 
   // ── Calls 1-13: sequential research calls ────────────────────────────────
   const r1 = runWith(1, 'Token Info',
@@ -337,18 +321,37 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   const r13 = runWith(13, 'Deployer/Top Holder Labels',
     `nansen research profiler labels --address ${holderTarget} --chain ${chain}`);
 
+  // Call #14: SM historical-holdings (always-on) — positions over time
+  const r14 = runWith(14, 'SM Historical Holdings',
+    `nansen research smart-money historical-holdings --chain ${chain} --limit 3`);
+
   // results array: index maps to call number - 1
-  const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13];
+  const results = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14];
 
   // ── Write debug file ──────────────────────────────────────────────────────
   try { await fs.outputJson(DEBUG_PATH, debugLog, { spaces: 2 }); } catch {}
 
+  // ── Score ─────────────────────────────────────────────────────────────────
+  const { score, flags, factors, lastKnownScores: updatedLastKnown } = computeScore(results, topTraderAddress, lastKnownScores);
+
+  // ── Agent call: standard scan (synthesis) or deep (--expert) ─────────────
+  // Fires after scoring so we can pass factor summary into the prompt.
+  const factorSummary = factors.map(f => `${f.name}:${f.score}/${f.max}`).join(', ');
+  const agentResult = await runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep);
+  const agentCmd = deep
+    ? `nansen agent "<synthesis prompt>" --expert`
+    : `nansen agent "<synthesis prompt>"`;
+  if (agentResult.ok) {
+    agentAssessment = agentResult.data?.trim() || null;
+    agentCallEntry = { callNum: 0, command: agentCmd, status: 'ok', summary: 'AI synthesis complete', ms: agentResult.ms };
+  } else {
+    agentCallEntry = { callNum: 0, command: agentCmd, status: 'failed', summary: 'Agent call failed (UNSCORED)', ms: agentResult.ms };
+  }
+  debugLog['call_0'] = { command: agentCmd, status: agentResult.ok ? 'ok' : 'failed', ms: agentResult.ms };
+
   // ── Build call log ────────────────────────────────────────────────────────
   const researchCalls = getCallLog();
   const callLog = agentCallEntry ? [agentCallEntry, ...researchCalls] : researchCalls;
-
-  // ── Score ─────────────────────────────────────────────────────────────────
-  const { score, flags, factors, lastKnownScores: updatedLastKnown } = computeScore(results, topTraderAddress, lastKnownScores);
 
   // ── Token info ────────────────────────────────────────────────────────────
   let tokenInfo = { name: 'Unknown', symbol: 'UNKNOWN', address: tokenAddress };
