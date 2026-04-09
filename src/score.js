@@ -288,12 +288,9 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   const r3 = runWith(3, 'Token Holders',
     `nansen research token holders --token ${tokenAddress} --chain ${chain} --fields address,token_amount --limit 3`);
 
-  // Extract key addresses — explicit length check prevents undefined access
-  const whoData = parseArray(r2.data);
-  const topTraderAddress = (whoData && whoData.length > 0) ? (whoData[0].address ?? null) : null;
+  // Extract holder/who-bought-sold addresses for fallback only
   const holderData = parseArray(r3.data);
   const topHolderAddress = (holderData && holderData.length > 0) ? (holderData[0].address ?? null) : null;
-  debugLog.topTraderAddress = topTraderAddress;
   debugLog.topHolderAddress = topHolderAddress;
 
   const r4 = runWith(4, 'Token Flows',
@@ -302,6 +299,17 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   // Only --chain, --token, --days are supported. Remove the invalid flags.
   const r5 = runWith(5, 'Token PnL Leaderboard',
     `nansen research token pnl --token ${tokenAddress} --chain ${chain} --days 30`);
+
+  // Extract top PnL trader address from leaderboard — this is the correct profiler target.
+  // Fallback: first entry from who-bought-sold, then hardcoded known wallet.
+  const pnlData = parseArray(r5.data);
+  const topPnlAddress = (pnlData && pnlData.length > 0) ? (pnlData[0].address ?? null) : null;
+  const whoData = parseArray(r2.data);
+  const whoBoughtTop = (whoData && whoData.length > 0) ? (whoData[0].address ?? null) : null;
+  const topTraderAddress = topPnlAddress ?? whoBoughtTop ?? null;
+  debugLog.topTraderAddress = topTraderAddress;
+  debugLog.topPnlAddress = topPnlAddress;
+
   const r6 = runWith(6, 'SM DEX Trades',
     `nansen research smart-money dex-trades --chain ${chain} --timeframe 24h --limit 3`);
 
