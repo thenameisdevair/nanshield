@@ -3,7 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs-extra';
-import { printBanner, printScoreBar, printFactorsAnimated, printApiCallProof, printVerdict, writeReport } from './display.js';
+import { printBanner, printScoreBar, printFactorsAnimated, printApiCallProof, printVerdict, writeReportFull } from './display.js';
 import scoreToken from './score.js';
 import { isAddress, runNansen, parseArray, parseData } from './nansen.js';
 
@@ -156,7 +156,15 @@ export default async function runCheck(token, chain, options = {}) {
   const verdict = result.score >= threshold ? 'BLOCKED' : 'CLEARED';
   if (options.report) {
     const fullCallLog = searchCallEntry ? [searchCallEntry, ...result.callLog] : result.callLog;
-    writeReport(resolvedToken, finalChain, result.score, result.factors, verdict, fullCallLog, './NANSHIELD-REPORT.md', result.agentAssessment);
+    const scanData = {
+      tokenInfo: result.tokenInfo || { symbol: resolvedToken.slice(0, 8), address: resolvedToken },
+      chain: finalChain,
+      score: result.score,
+      factors: result.factors,
+      callLog: fullCallLog,
+      agentAssessment: result.agentAssessment || null,
+    };
+    await writeReportFull(resolvedToken, finalChain, result.score, result.factors, verdict, fullCallLog, './NANSHIELD-REPORT.md', result.agentAssessment, scanData);
   }
 
   // 10. Next steps
