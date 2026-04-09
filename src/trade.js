@@ -18,6 +18,8 @@ import ora from 'ora';
 import { printBanner, printScoreBar, printScoreBreakdown, printVerdict, printApiCallProof } from './display.js';
 import scoreToken from './score.js';
 import { runNansen, parseData } from './nansen.js';
+import { generate as generateHtml } from './htmlReport.js';
+import { sendAlert } from './telegram.js';
 
 const CONFIG_PATH  = path.join(os.homedir(), '.nanshield', 'config.json');
 const TRADE_LOG    = path.join(os.homedir(), '.nanshield', 'logs', 'trades.json');
@@ -294,6 +296,42 @@ export default async function runTrade(token, chain, options = {}) {
     { callNum: 'E', command: execCmd, status: txHash ? 'ok' : 'failed', summary: txHash ? `TX: ${txHash?.slice(0, 14)}...` : 'failed', ms: 0 },
   ];
   printApiCallProof([...result.callLog, ...tradeCalls], true);
+
+  // ── Auto HTML report on every trade ────────────────────────────────────
+  try {
+    const tradeInfo = {
+      spend:       `${amount} ${fromToken}`,
+      receive:     `(see TX)`,
+      priceImpact: '—',
+      route:       '—',
+      txHash,
+    };
+    await generateHtml({
+      tokenInfo: result.tokenInfo || { symbol: token.slice(0, 8), address: token },
+      chain: finalChain,
+      score,
+      factors: result.factors,
+      callLog: result.callLog,
+      agentAssessment: result.agentAssessment,
+      tradeResult: tradeInfo,
+    });
+  } catch {}
+
+  // ── TG warning if --force ────────────────────────────────────────────
+  if (force) {
+    console.log(chalk.bgRed.white('\n ⚠ FORCE TRADE WARNING: You overrode the security gate. '));
+    try {
+      await sendAlert('FORCE_TRADE_EXECUTED', {
+        symbol: result.tokenInfo?.symbol || token.slice(0, 8),
+        score,
+        amount,
+        fromToken,
+        toToken: token,
+        txHash,
+        token,
+      });
+    } catch {}
+  }
 
   // Next steps
   console.log(chalk.yellow('Next steps:'));
