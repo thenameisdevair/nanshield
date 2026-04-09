@@ -393,7 +393,6 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
     const netflowArr = parseArray(r7.data);
     if (netflowArr && netflowArr.length > 0) {
       const total = netflowArr.reduce((s, x) => s + (x.net_flow_24h_usd ?? 0), 0);
-      console.error(`[debug] netflow total: ${total} from ${netflowArr.length} entries`);
       smNetflow7d = [{ date: '24h', value: total }];
     }
   } catch {}
@@ -403,7 +402,6 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   try {
     const whoArr = parseArray(r2.data);
     if (whoArr && whoArr.length > 0) {
-      console.error(`[debug] holder labels: ${whoArr.map(w => w.address_label || '(empty)').join(', ')}`);
       const comp = { Fund: 0, Whale: 0, 'DEX MM': 0, Retail: 0, Unknown: 0 };
       for (const w of whoArr) {
         const lbl = (w.address_label || '').toLowerCase();
