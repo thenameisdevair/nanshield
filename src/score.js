@@ -359,10 +359,20 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   // explains NanShield's result rather than issuing its own contradictory one.
   const verdict = score >= threshold ? 'BLOCKED' : 'CLEARED';
   const factorSummary = factors.map(f => `${f.name}:${f.score}/${f.max}(${f.detail})`).join(' | ');
+
+  // Extract symbol from r1 so the agent prompt references the real token name
+  let agentSymbol = null;
+  try {
+    const json = JSON.parse(r1.data);
+    const d = json?.data?.data;
+    agentSymbol = d?.symbol || null;
+  } catch {}
+
   const agentResult = await runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep, {
     score,
     threshold,
     verdict,
+    symbol: agentSymbol,
   });
   const agentCmd = deep
     ? `nansen agent "<synthesis prompt>" --expert`

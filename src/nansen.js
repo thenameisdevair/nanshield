@@ -140,7 +140,7 @@ export function isAddress(input) {
 //   - unlabeled wallets = anonymous = increased risk (not "safe")
 //   - must not contradict the computed verdict
 //   - must end with one specific monitor action for the trader
-function buildAgentPrompt(tokenAddress, chain, factorSummary, score, verdict, deep) {
+function buildAgentPrompt(tokenAddress, chain, factorSummary, score, verdict, deep, symbol = null) {
   // Parse triggered factors (score > 0) from the summary string
   // Format: "Name:score/max(detail) | ..."
   const triggeredLines = factorSummary
@@ -161,17 +161,23 @@ function buildAgentPrompt(tokenAddress, chain, factorSummary, score, verdict, de
     `4. End with one specific thing the trader should monitor before executing.`,
   ].join('\n');
 
+  const tokenContext = symbol
+    ? `Token: $${symbol} (address: ${tokenAddress}, chain: ${chain})`
+    : `Token: ${tokenAddress} (chain: ${chain})`;
+
   if (deep) {
     return (
+      `${tokenContext}\n` +
       `NanShield computed a risk score of ${score}/100. Verdict: ${verdict}.\n\n` +
       `Key risk signals found:\n${riskSignals}\n\n` +
-      `Perform a deep expert analysis of token ${tokenAddress} on ${chain}. ` +
+      `Perform a deep expert analysis of this token. ` +
       `Evaluate rug pull signals, smart money positioning, holder concentration, and suspicious trading patterns. ` +
       `Your response must follow these rules:\n${sharedRules}`
     );
   }
 
   return (
+    `${tokenContext}\n` +
     `NanShield computed a risk score of ${score}/100. Verdict: ${verdict}.\n\n` +
     `Key risk signals found:\n${riskSignals}\n\n` +
     `Provide a 2-3 sentence assessment that follows these rules:\n${sharedRules}`
@@ -183,9 +189,9 @@ function buildAgentPrompt(tokenAddress, chain, factorSummary, score, verdict, de
 // Deep scan: adds --expert flag and deeper analysis instruction.
 // scoreData = { score, threshold, verdict } — agent explains, never overrides.
 export async function runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep = false, scoreData = {}) {
-  const { score = '?', verdict = 'UNKNOWN' } = scoreData;
+  const { score = '?', verdict = 'UNKNOWN', symbol = null } = scoreData;
 
-  const prompt = buildAgentPrompt(tokenAddress, chain, factorSummary, score, verdict, deep);
+  const prompt = buildAgentPrompt(tokenAddress, chain, factorSummary, score, verdict, deep, symbol);
 
   const expertFlag = deep ? ' --expert' : '';
   const cmd = `nansen agent "${prompt.replace(/"/g, '\\"')}"${expertFlag}`;

@@ -67,20 +67,37 @@ export default async function runDemo(argv = {}) {
       process.exit(1);
     }
 
-    // Filter: prefer tokens with higher liquidity (lower risk signal)
-    const sorted = [...tokens].sort((a, b) => {
-      const aLiq = a.liquidity_usd ?? a.buy_volume_usd ?? 0;
-      const bLiq = b.liquidity_usd ?? b.buy_volume_usd ?? 0;
-      return bLiq - aLiq;
-    });
+    // Filter out stablecoins, wrapped assets, and mega-cap tokens — not interesting for demo
+    const SKIP_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'WETH', 'WBTC', 'CBBTC', 'CBBBTC']);
+    const SKIP_NAME_PATTERNS = ['USD', 'Tether', 'Wrapped', 'Staked'];
+    const MAX_DEMO_LIQUIDITY = 50_000_000;
 
-    const selected = sorted[0];
-    const selectedAddr = selected.token_address ?? selected.address ?? selected.contract_address;
-    const selectedSymbol = selected.token_symbol ?? selected.symbol ?? selected.name ?? '?';
+    function isSkipped(t) {
+      const sym = (t.token_symbol ?? t.symbol ?? '').toUpperCase();
+      const name = t.name ?? t.token_name ?? '';
+      const liq = t.liquidity_usd ?? 0;
+      if (SKIP_SYMBOLS.has(sym)) return true;
+      if (SKIP_NAME_PATTERNS.some(p => name.includes(p))) return true;
+      if (liq > MAX_DEMO_LIQUIDITY) return true;
+      return false;
+    }
+
+    const filtered = tokens.filter(t => !isSkipped(t));
+
+    const FALLBACK_ADDR   = '0x532f27101965dd16442E59d40670FaF5eBB142E4';
+    const FALLBACK_SYMBOL = 'BRETT';
+
+    let selectedAddr, selectedSymbol;
+    if (filtered.length > 0) {
+      const selected = filtered[0];
+      selectedAddr   = selected.token_address ?? selected.address ?? selected.contract_address;
+      selectedSymbol = selected.token_symbol ?? selected.symbol ?? selected.name ?? '?';
+    }
 
     if (!selectedAddr) {
-      console.log(chalk.red('Could not extract token address from discovery results.'));
-      process.exit(1);
+      console.log(chalk.yellow('No suitable non-stablecoin token found. Using BRETT as demo target.'));
+      selectedAddr   = FALLBACK_ADDR;
+      selectedSymbol = FALLBACK_SYMBOL;
     }
 
     console.log(chalk.green(`Selected: $${selectedSymbol} (${selectedAddr})`));
@@ -123,13 +140,13 @@ export default async function runDemo(argv = {}) {
     if (score < threshold) {
       console.log(chalk.green('Token cleared. Fetching trade quote...'));
 
+      // 10 USDC = 10,000,000 base units (USDC has 6 decimals)
       const quoteCmd = [
         'nansen trade quote',
         `--chain ${chain}`,
         `--from USDC`,
         `--to ${selectedAddr}`,
-        `--amount 10`,
-        `--amount-unit base`,
+        `--amount 10000000`,
       ].join(' ');
 
       const quoteRes = runNansen(quoteCmd, apiKey, 60000);
