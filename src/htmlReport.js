@@ -358,35 +358,41 @@ new Chart(holderCtx, {
 </html>`;
 }
 
-// ── generate(scanData) — write file and optionally open in browser ─────────────
-export async function generate(scanData) {
+// ── generate(scanData, outputDir?) — write file and optionally open in browser ──
+export async function generate(scanData, outputDir) {
+  console.log('htmlReport.generate() called');
   try {
     const tokenInfo = scanData.tokenInfo || {};
     const symbol    = (tokenInfo.symbol || 'UNKNOWN').replace(/[^A-Za-z0-9_-]/g, '');
     const chain     = (scanData.chain || 'base').replace(/[^A-Za-z0-9_-]/g, '');
     const timeStr   = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
 
-    const reportDir  = path.join(os.homedir(), '.nanshield', 'reports');
-    const fileName   = `NANSHIELD-${symbol}-${chain}-${timeStr}.html`;
-    const filePath   = path.join(reportDir, fileName);
+    // Save alongside the markdown report (cwd) unless caller specifies a dir
+    const reportDir = outputDir || process.cwd();
+    const fileName  = `NANSHIELD-${symbol}-${chain}-${timeStr}.html`;
+    const filePath  = path.join(reportDir, fileName);
 
-    await fs.ensureDir(reportDir);
+    // Ensure the directory exists (sync — avoids async permission issues)
+    fs.mkdirSync(reportDir, { recursive: true });
+
     const html = buildHtml(scanData);
-    await fs.writeFile(filePath, html, 'utf8');
+    fs.writeFileSync(filePath, html, 'utf8');
 
-    console.log(`\nHTML report: ${filePath}`);
+    console.log(`HTML report: ${filePath}`);
 
     // Auto-open in browser if interactive terminal
     if (process.stdout.isTTY) {
       try {
         const { default: openBrowser } = await import('open');
         await openBrowser(filePath);
-      } catch { /* silent — file path already printed */ }
+      } catch (openErr) {
+        console.error(`Browser open failed: ${openErr.message}`);
+      }
     }
 
     return filePath;
   } catch (err) {
-    console.error(`htmlReport.generate error: ${err.message}`);
+    console.error('HTML generation failed:', err.message, err.stack);
     return null;
   }
 }
