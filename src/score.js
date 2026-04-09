@@ -262,7 +262,7 @@ export function computeScore(results, topTraderAddress, lastKnownScores = {}) {
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
-export default async function scoreToken(tokenAddress, chain, apiKey, deep = false, onProgress = null, lastKnownScores = {}) {
+export default async function scoreToken(tokenAddress, chain, apiKey, deep = false, onProgress = null, lastKnownScores = {}, threshold = 60) {
   resetCallLog();
   const debugLog = { token: tokenAddress, chain, timestamp: new Date().toISOString() };
 
@@ -298,8 +298,10 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
 
   const r4 = runWith(4, 'Token Flows',
     `nansen research token flows --token ${tokenAddress} --chain ${chain} --limit 3`);
+  // BUG 2 FIX: --sort and --limit are not valid options for token pnl per schema.
+  // Only --chain, --token, --days are supported. Remove the invalid flags.
   const r5 = runWith(5, 'Token PnL Leaderboard',
-    `nansen research token pnl --token ${tokenAddress} --chain ${chain} --days 30 --sort pnl_usd:desc --limit 10`);
+    `nansen research token pnl --token ${tokenAddress} --chain ${chain} --days 30`);
   const r6 = runWith(6, 'SM DEX Trades',
     `nansen research smart-money dex-trades --chain ${chain} --timeframe 24h --limit 3`);
   const r7 = runWith(7, 'SM Net Flow',
@@ -335,9 +337,15 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
   const { score, flags, factors, lastKnownScores: updatedLastKnown } = computeScore(results, topTraderAddress, lastKnownScores);
 
   // ── Agent call: standard scan (synthesis) or deep (--expert) ─────────────
-  // Fires after scoring so we can pass factor summary into the prompt.
-  const factorSummary = factors.map(f => `${f.name}:${f.score}/${f.max}`).join(', ');
-  const agentResult = await runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep);
+  // BUG 1 FIX: pass computed score, threshold, and verdict so the agent
+  // explains NanShield's result rather than issuing its own contradictory one.
+  const verdict = score >= threshold ? 'BLOCKED' : 'CLEARED';
+  const factorSummary = factors.map(f => `${f.name}:${f.score}/${f.max}(${f.detail})`).join(' | ');
+  const agentResult = await runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep, {
+    score,
+    threshold,
+    verdict,
+  });
   const agentCmd = deep
     ? `nansen agent "<synthesis prompt>" --expert`
     : `nansen agent "<synthesis prompt>"`;

@@ -3,7 +3,7 @@ import path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs-extra';
-import { printBanner, printScoreBar, printScoreBreakdown, printApiCallProof, printVerdict, writeReport } from './display.js';
+import { printBanner, printScoreBar, printFactorsAnimated, printApiCallProof, printVerdict, writeReport } from './display.js';
 import scoreToken from './score.js';
 import { isAddress, runNansen, parseArray, parseData } from './nansen.js';
 
@@ -122,7 +122,7 @@ export default async function runCheck(token, chain, options = {}) {
   // 5. Run scan
   let result;
   try {
-    result = await scoreToken(resolvedToken, finalChain, apiKey, options.deep ?? false, onProgress);
+    result = await scoreToken(resolvedToken, finalChain, apiKey, options.deep ?? false, onProgress, {}, threshold);
   } catch (err) {
     currentSpinner?.fail('Scan failed');
     console.log(chalk.red(`Error: ${err.message}`));
@@ -141,9 +141,11 @@ export default async function runCheck(token, chain, options = {}) {
     console.log('');
   }
 
-  // 7. Score bar, breakdown, verdict
+  // 7. Score bar, animated factor breakdown, verdict
+  // BUG 3 FIX: call printFactorsAnimated (not the static printScoreBreakdown)
+  // so bars fill left-to-right over 200ms each in interactive TTY.
   printScoreBar(result.score, threshold);
-  printScoreBreakdown(result.factors);
+  await printFactorsAnimated(result.factors, process.stdout.isTTY && !(options.noAnimation));
   printVerdict(result.score, threshold);
 
   // 8. API call proof summary

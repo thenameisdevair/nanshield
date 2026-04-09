@@ -15,7 +15,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
 import ora from 'ora';
-import { printBanner, printScoreBar, printScoreBreakdown, printVerdict, printApiCallProof } from './display.js';
+import { printBanner, printScoreBar, printFactorsAnimated, printVerdict, printApiCallProof } from './display.js';
 import scoreToken from './score.js';
 import { runNansen, parseData } from './nansen.js';
 import { generate as generateHtml } from './htmlReport.js';
@@ -137,7 +137,7 @@ export default async function runTrade(token, chain, options = {}) {
   const scanStart = Date.now();
   let result;
   try {
-    result = await scoreToken(token, finalChain, apiKey, false, onProgress);
+    result = await scoreToken(token, finalChain, apiKey, false, onProgress, {}, threshold);
   } catch (err) {
     currentSpinner?.fail('Scan failed');
     console.log(chalk.red(`Error: ${err.message}`));
@@ -148,8 +148,9 @@ export default async function runTrade(token, chain, options = {}) {
   console.log(chalk.gray(`\n  Completed in ${elapsed}s — ${scanSuccess}/13 calls succeeded`));
 
   const { score, flags, factors } = result;
+  // BUG 3 FIX: use animated factor bars
   printScoreBar(score, threshold);
-  printScoreBreakdown(factors);
+  await printFactorsAnimated(factors, process.stdout.isTTY);
   printVerdict(score, threshold);
 
   // ── Gate check ───────────────────────────────────────────────────────────

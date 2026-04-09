@@ -94,18 +94,26 @@ export function isAddress(input) {
 }
 
 // ── Fire nansen agent with retry ──────────────────────────────────────────────
-// Standard scan: focused 150-word synthesis prompt (not --expert).
+// Standard scan: focused synthesis prompt grounded in the computed score.
 // Deep scan: adds --expert flag.
-export async function runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep = false) {
+// scoreData = { score, threshold, verdict } — agent must explain, not override.
+export async function runAgentSynthesis(tokenAddress, chain, apiKey, factorSummary, deep = false, scoreData = {}) {
+  const { score, threshold = 60, verdict = 'UNKNOWN' } = scoreData;
+  const hasScore = score !== undefined && score !== null;
+
+  const scoreLine = hasScore
+    ? `NanShield computed a risk score of ${score}/100 across 8 factors. ` +
+      `The threshold is ${threshold}. The verdict is ${verdict}. `
+    : '';
+
   const prompt = deep
-    ? `Perform a deep expert analysis of token ${tokenAddress} on ${chain}. ` +
-      `Factor assessment: ${factorSummary}. ` +
-      `Evaluate rug pull signals, smart money positioning, holder concentration risks, ` +
-      `and suspicious trading patterns. Provide a comprehensive risk verdict.`
-    : `Synthesize a one-paragraph risk verdict for token ${tokenAddress} on ${chain}. ` +
-      `Factor scores: ${factorSummary}. ` +
-      `In under 150 words: is this token safe to trade? What are the top 2 risk signals? ` +
-      `What does smart money positioning indicate?`;
+    ? `${scoreLine}Perform a deep expert analysis of token ${tokenAddress} on ${chain}. ` +
+      `Based on the following factor breakdown, explain what drives this verdict — evaluate rug pull signals, ` +
+      `smart money positioning, holder concentration risks, and suspicious trading patterns. ` +
+      `Do not issue your own contradictory verdict. Factor data: ${factorSummary}`
+    : `${scoreLine}Based on the following factor breakdown, provide a 2-3 sentence synthesis that ` +
+      `EXPLAINS this verdict — do not issue your own contradictory verdict. ` +
+      `Factor data: ${factorSummary}`;
 
   const expertFlag = deep ? ' --expert' : '';
   const cmd = `nansen agent "${prompt.replace(/"/g, '\\"')}"${expertFlag}`;
