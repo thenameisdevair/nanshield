@@ -1,7 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs-extra';
-import { runNansen, runAgentSynthesis, parseData, parseArray, fmt, logCall, resetCallLog, getCallLog } from './nansen.js';
+import { runNansen, runNansenSingleRetry, runAgentSynthesis, parseData, parseArray, fmt, logCall, resetCallLog, getCallLog } from './nansen.js';
 
 const DEBUG_PATH = path.join(os.homedir(), '.nanshield', 'debug-last-run.json');
 const TOTAL_CALLS = 14;
@@ -304,8 +304,18 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
     `nansen research token pnl --token ${tokenAddress} --chain ${chain} --days 30`);
   const r6 = runWith(6, 'SM DEX Trades',
     `nansen research smart-money dex-trades --chain ${chain} --timeframe 24h --limit 3`);
-  const r7 = runWith(7, 'SM Net Flow',
-    `nansen research smart-money netflow --chain ${chain} --timeframe 24h --limit 3`);
+
+  // ── Call 7: SM Net Flow — single retry after 2s, error type classified ──────
+  const _smNetflowCmd = `nansen research smart-money netflow --chain ${chain} --timeframe 24h --limit 3`;
+  if (onProgress) onProgress(7, TOTAL_CALLS, 'SM Net Flow', false, null);
+  const r7 = await runNansenSingleRetry(_smNetflowCmd, apiKey);
+  {
+    const summary = extractSummary(7, r7);
+    const errType = r7.errorType || 'endpoint error';
+    logCall(7, _smNetflowCmd, r7.ok ? 'ok' : 'failed', summary, r7.ms);
+    debugLog['call_7'] = { command: _smNetflowCmd, status: r7.ok ? 'ok' : 'failed', ms: r7.ms, raw: r7.data?.slice(0, 2000), summary, errorType: errType };
+    if (onProgress) onProgress(7, TOTAL_CALLS, 'SM Net Flow', true, { ok: r7.ok, summary, errorType: errType });
+  }
   const r8 = runWith(8, 'SM Holdings',
     `nansen research smart-money holdings --chain ${chain} --limit 3`);
 

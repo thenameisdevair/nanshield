@@ -113,7 +113,8 @@ export default async function runCheck(token, chain, options = {}) {
         currentSpinner?.succeed(callLine(callNum, total, label, chalk.green('✓'), res.summary));
       } else {
         failCount++;
-        currentSpinner?.warn(callLine(callNum, total, label, chalk.yellow('⚠'), 'unavailable'));
+        const errLabel = `unavailable (${res.errorType || 'endpoint error'})`;
+        currentSpinner?.warn(callLine(callNum, total, label, chalk.yellow('⚠'), errLabel));
       }
       currentSpinner = null;
     }
