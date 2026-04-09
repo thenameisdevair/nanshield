@@ -163,6 +163,8 @@ export default async function runCheck(token, chain, options = {}) {
       factors: result.factors,
       callLog: fullCallLog,
       agentAssessment: result.agentAssessment || null,
+      smNetflow7d: result.smNetflow7d || [],
+      holderComposition: result.holderComposition || null,
     };
     await writeReportFull(resolvedToken, finalChain, result.score, result.factors, verdict, fullCallLog, './NANSHIELD-REPORT.md', result.agentAssessment, scanData);
   }

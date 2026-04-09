@@ -1,6 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs-extra';
+import { marked } from 'marked';
 
 // ── Minimal Chart.js stub (self-contained, no CDN) ────────────────────────────
 // We embed a tiny inline Chart.js implementation for bar + doughnut charts.
@@ -184,15 +185,20 @@ export function buildHtml(scanData) {
       <div class="call-num">${i + 1}</div><div class="call-name">${name}</div></div>`;
   }).join('');
 
-  // SM Netflow chart data
-  const netflowLabels = smNetflow7d.map(d => d.date || '').map(d => d.slice(5));
-  const netflowValues = smNetflow7d.map(d => d.value || 0);
+  // SM Netflow chart data — use real values; fall back to a zero placeholder so
+  // the chart always renders with at least one bar rather than an empty canvas.
+  const _netflowSrc = smNetflow7d && smNetflow7d.length > 0
+    ? smNetflow7d
+    : [{ date: 'N/A', value: 0 }];
+  const netflowLabels = _netflowSrc.map(d => (d.date || '').slice(-5) || 'N/A');
+  const netflowValues = _netflowSrc.map(d => d.value ?? 0);
   const netflowColors = netflowValues.map(v => v >= 0 ? '#00ff88' : '#ff4444');
 
-  // Holder composition data
-  const holderData = holderComposition || { Fund: 0, Whale: 0, 'DEX MM': 0, Retail: 0, Unknown: 100 };
-  const holderLabels = Object.keys(holderData);
-  const holderValues = Object.values(holderData);
+  // Holder composition data — filter zero buckets so doughnut shows real segments
+  const _rawHolder = holderComposition || { Unknown: 1 };
+  const _holderEntries = Object.entries(_rawHolder).filter(([, v]) => v > 0);
+  const holderLabels = _holderEntries.length > 0 ? _holderEntries.map(([k]) => k) : ['Unknown'];
+  const holderValues = _holderEntries.length > 0 ? _holderEntries.map(([, v]) => v) : [1];
   const holderColors = ['#00ff88', '#ffaa00', '#ff4444', '#888', '#444'];
 
   // Trade block HTML
@@ -210,12 +216,15 @@ export function buildHtml(scanData) {
       </div>` : ''}
     </div>` : '';
 
-  // Agent synthesis HTML
-  const agentHtml = agentAssessment ? `
-    <div class="card full-width" style="margin-top:16px">
+  // Agent synthesis HTML — convert markdown to HTML so ##, **, * render correctly
+  const agentHtml = agentAssessment ? (() => {
+    let agentBody = '';
+    try { agentBody = marked.parse(agentAssessment); } catch { agentBody = `<pre>${agentAssessment.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`; }
+    return `<div class="card full-width" style="margin-top:16px">
       <h3 style="color:#ffaa00">AI Agent Synthesis</h3>
-      <pre class="agent-text">${agentAssessment.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
-    </div>` : '';
+      <div class="agent-text agent-md">${agentBody}</div>
+    </div>`;
+  })() : '';
 
   // Advisor HTML
   const advisorHtml = advisorText ? `
@@ -260,7 +269,14 @@ canvas{background:#0d0d0d;border-radius:4px;width:100%;height:200px}
 .call-icon{font-size:16px;font-weight:bold}
 .call-num{font-size:10px;color:#555;margin-top:2px}
 .call-name{font-size:9px;color:#666;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.agent-text{font-size:12px;color:#ccc;white-space:pre-wrap;line-height:1.6;font-family:monospace}
+.agent-text{font-size:12px;color:#ccc;line-height:1.6;font-family:monospace}
+.agent-md h1,.agent-md h2,.agent-md h3{color:#ffaa00;margin:10px 0 4px;font-size:13px}
+.agent-md strong{color:#fff}
+.agent-md ul{padding-left:18px;margin:4px 0}
+.agent-md li{margin:2px 0}
+.agent-md hr{border:none;border-top:1px solid #333;margin:10px 0}
+.agent-md a{color:#00ff88}
+.agent-md p{margin:4px 0}
 .trade-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-top:8px}
 .label{display:block;font-size:11px;color:#555;margin-bottom:4px}
 .value{display:block;font-size:14px;color:#fff;font-weight:bold}

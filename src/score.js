@@ -387,9 +387,39 @@ export default async function scoreToken(tokenAddress, chain, apiKey, deep = fal
     if (d) tokenInfo = { name: d.name ?? tokenInfo.name, symbol: d.symbol ?? tokenInfo.symbol, address: tokenAddress };
   } catch {}
 
+  // ── SM Netflow for HTML chart — single bar with 24h total ────────────────────
+  let smNetflow7d = [];
+  try {
+    const netflowArr = parseArray(r7.data);
+    if (netflowArr && netflowArr.length > 0) {
+      const total = netflowArr.reduce((s, x) => s + (x.net_flow_24h_usd ?? 0), 0);
+      console.error(`[debug] netflow total: ${total} from ${netflowArr.length} entries`);
+      smNetflow7d = [{ date: '24h', value: total }];
+    }
+  } catch {}
+
+  // ── Holder composition from who-bought-sold labels ────────────────────────────
+  let holderComposition = null;
+  try {
+    const whoArr = parseArray(r2.data);
+    if (whoArr && whoArr.length > 0) {
+      console.error(`[debug] holder labels: ${whoArr.map(w => w.address_label || '(empty)').join(', ')}`);
+      const comp = { Fund: 0, Whale: 0, 'DEX MM': 0, Retail: 0, Unknown: 0 };
+      for (const w of whoArr) {
+        const lbl = (w.address_label || '').toLowerCase();
+        if (lbl.includes('fund')) comp.Fund++;
+        else if (lbl.includes('whale')) comp.Whale++;
+        else if (lbl.includes('dex') || lbl.includes('market maker') || lbl.includes(' mm')) comp['DEX MM']++;
+        else if (lbl.trim()) comp.Retail++;
+        else comp.Unknown++;
+      }
+      holderComposition = comp;
+    }
+  } catch {}
+
   // ── Credits estimate ──────────────────────────────────────────────────────
   const creditsUsed = results.filter(r => r.ok).length * 3; // rough estimate
   console.error(`Estimated credits used: ~${creditsUsed}${deep ? ' + ~20 (agent)' : ''}`);
 
-  return { score, flags, factors, callLog, tokenInfo, agentAssessment, topTraderAddress, topHolderAddress, lastKnownScores: updatedLastKnown };
+  return { score, flags, factors, callLog, tokenInfo, agentAssessment, topTraderAddress, topHolderAddress, lastKnownScores: updatedLastKnown, smNetflow7d, holderComposition };
 }
