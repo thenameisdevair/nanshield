@@ -64,7 +64,8 @@ async function sendTelegramMessage(botToken, chatId, text) {
       await attempt();
       return true;
     } catch (err2) {
-      // Log failure
+      console.error(`TG send failed: ${err2.message}`);
+      // Also write to fail log
       try {
         await fs.ensureDir(path.dirname(TG_FAIL_LOG));
         const entry = `[${new Date().toISOString()}] ${err2.message}\nMessage: ${msg.slice(0, 200)}\n---\n`;
@@ -113,6 +114,7 @@ export async function sendTestMessage() {
 export async function sendAlert(type, data) {
   try {
     const { botToken, chatId } = await loadCredentials();
+    console.log('TG config:', botToken ? 'token present' : 'TOKEN MISSING', chatId ? 'chatId present' : 'CHATID MISSING');
     if (!botToken || !chatId) {
       console.error('TG not configured. Run: nanshield setup');
       return false;
@@ -130,10 +132,11 @@ export async function sendAlert(type, data) {
           return `${arrow} ${d.name}: ${d.previous} → ${d.current} (${sign}${d.delta}) — ${d.detail || ''}`;
         }).join('\n');
 
+        const scoreChange = oldScore !== null ? `${oldScore} → ${newScore}` : `${newScore} (already blocked on first scan)`;
         text = `🛡 <b>NANSHIELD ALERT</b>\n\n` +
                `Token: $${symbol || token} (${chain})\n` +
                `Scan #${scanNum} — ${ts}\n\n` +
-               `Score: ${oldScore} → ${newScore} ⛔ THRESHOLD CROSSED (≥${threshold})\n\n` +
+               `Score: ${scoreChange} ⛔ ABOVE THRESHOLD (≥${threshold})\n\n` +
                `Changes:\n${deltaLines || '(none recorded)'}\n\n` +
                `Run deep scan:\n<code>nanshield check ${token} --chain ${chain} --deep</code>`;
         break;

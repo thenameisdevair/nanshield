@@ -228,16 +228,22 @@ export default async function runWatch(token, chain, options = {}) {
       }
     }
 
+    // Fire alert on threshold crossing OR on first scan if already blocked
+    const firstScanBlocked = previousScore === null && isBlocked;
+
     if (thresholdCrossed) {
       console.log(chalk.bgRed.white(` ⚠ ALERT ⚠ `) + chalk.red(' Risk threshold crossed. Check your position.'));
       console.log(chalk.red(`           >>> Score crossed ${threshold}. Review your position immediately.`));
+    } else if (firstScanBlocked) {
+      console.log(chalk.bgRed.white(` ⚠ ALERT ⚠ `) + chalk.red(` Score ${score} already above threshold ${threshold} on first scan.`));
     }
 
     // ── Telegram alerts ──────────────────────────────────────────────────
-    if (useTg && thresholdCrossed) {
+    if (useTg && (thresholdCrossed || firstScanBlocked)) {
       await sendAlert('THRESHOLD_CROSSED', {
         symbol: tokenSymbol, chain: finalChain, scanNum,
-        oldScore: previousScore, newScore: score, threshold,
+        oldScore: firstScanBlocked ? null : previousScore,
+        newScore: score, threshold,
         deltas: deltas || [], token,
       });
     } else if (useTg && hasChanges && !isBlocked) {
