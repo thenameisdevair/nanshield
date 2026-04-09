@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import chalk from 'chalk';
 import { printBanner } from './display.js';
+import { configure as tgConfigure, sendTestMessage } from './telegram.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.nanshield', 'config.json');
 
@@ -58,8 +59,52 @@ function withDefault(answer, def) {
   return answer.trim() === '' ? def : answer.trim();
 }
 
-export default async function runSetup() {
+// ── Telegram-only sub-wizard ──────────────────────────────────────────────────
+async function runTgWizard(cfg) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  console.log(chalk.cyan('\nTelegram Alert Setup'));
+  console.log(chalk.gray('  Create a bot at t.me/BotFather to get a bot token.'));
+  const botToken = await prompt(rl, 'Enter your Telegram Bot Token: ');
+  console.log(chalk.gray('  Message @userinfobot on Telegram to get your Chat ID.'));
+  const chatId   = await prompt(rl, 'Enter your Telegram Chat ID: ');
+  rl.close();
+
+  const trimmedToken = botToken.trim();
+  const trimmedChatId = chatId.trim();
+
+  // Save regardless
+  cfg.tgBotToken = trimmedToken;
+  cfg.tgChatId   = trimmedChatId;
+  await fs.outputJson(CONFIG_PATH, cfg, { spaces: 2 });
+
+  if (!trimmedToken || !trimmedChatId) {
+    console.log(chalk.yellow('Token or Chat ID empty — saved but not verified.'));
+    return;
+  }
+
+  console.log(chalk.cyan('Testing Telegram connection...'));
+  const ok = await sendTestMessage();
+  if (ok) {
+    console.log(chalk.green('✓ Telegram connected'));
+  } else {
+    console.log(chalk.red('✗ Connection failed. Check token and chat ID.'));
+    console.log(chalk.gray('  Reconfigure: nanshield setup --tg-only'));
+  }
+}
+
+export default async function runSetup(options = {}) {
   printBanner();
+
+  // ── --tg-only mode: only re-run TG wizard ────────────────────────────────
+  if (options.tgOnly) {
+    let cfg = {};
+    try {
+      if (await fs.pathExists(CONFIG_PATH)) cfg = await fs.readJson(CONFIG_PATH);
+    } catch {}
+    await runTgWizard(cfg);
+    return;
+  }
 
   if (await fs.pathExists(CONFIG_PATH)) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -71,6 +116,7 @@ export default async function runSetup() {
     }
   }
 
+  // Q1-Q3: API key + basic settings
   const apiKey = await promptMasked('Enter your Nansen API key: ');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -96,7 +142,34 @@ export default async function runSetup() {
     console.log(chalk.red('✗ API key test failed — saved anyway, check key at app.nansen.ai'));
   }
 
-  await fs.outputJson(CONFIG_PATH, { apiKey, defaultChain, riskThreshold, watchInterval, walletName }, { spaces: 2 });
+  let cfg = { apiKey, defaultChain, riskThreshold, watchInterval, walletName };
+  await fs.outputJson(CONFIG_PATH, cfg, { spaces: 2 });
 
-  console.log(chalk.green('\n✓ NanGuard configured. Run: nanshield check <token> --chain base'));
+  // Q4: Telegram
+  const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const tgAnswer = await prompt(rl2, '\nConfigure Telegram alerts? (Y/n) ');
+  rl2.close();
+
+  if (tgAnswer.trim().toLowerCase() !== 'n') {
+    // Reload cfg before passing (may have been written above)
+    try { cfg = await fs.readJson(CONFIG_PATH); } catch {}
+    await runTgWizard(cfg);
+  }
+
+  // Q5: pm2
+  const rl3 = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const pm2Answer = await prompt(rl3, '\nInstall pm2 for detached watch mode? (Y/n) ');
+  rl3.close();
+
+  if (pm2Answer.trim().toLowerCase() !== 'n') {
+    console.log(chalk.cyan('Installing pm2 globally...'));
+    try {
+      execSync('npm install -g pm2', { stdio: 'inherit' });
+      console.log(chalk.green('✓ pm2 installed. Use --detach flag in watch commands.'));
+    } catch {
+      console.log(chalk.red('pm2 install failed. Install manually: npm install -g pm2'));
+    }
+  }
+
+  console.log(chalk.green('\n✓ NanShield configured. Run: nanshield check <token> --chain base'));
 }
